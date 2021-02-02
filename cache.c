@@ -633,13 +633,13 @@ int cache_load(const char *in_path) {
 	void* buf = g_malloc(sz);
 	ret = fread(buf, sz, 1, f);
 	if (ret <= 0) {
-		free(buf);
+		g_free(buf);
 		ret = errno;
 		goto done;
 	}
 
 	Dcache* store_root = dcache__unpack(NULL, sz, buf);
-	free(buf);
+	g_free(buf);
 
 	if (store_root == NULL) {
 		fprintf(stderr, "Corrupted dcache [%s], ignored.\n", in_path);
@@ -662,14 +662,12 @@ int cache_load(const char *in_path) {
 
 	pthread_mutex_lock(&cache.lock);
 
-	struct node* cvalues = calloc(n_entries, sizeof(struct node));
-
 	for(size_t i = 0; i < n_entries; i++) {
 		Dcache__EntriesEntry* entry = store_root->entries[i];
 
 		char* path = g_strdup(entry->key);
 		DcacheEntry* value = entry->value;
-		struct node* node = &cvalues[i];
+		struct node* node = g_malloc(sizeof(struct node));
 
 		fprintf(stderr, "Reading cache entry: %s\n", path);
 
@@ -796,7 +794,7 @@ int cache_dump(const char *out_path, size_t* entries_count) {
 		if (written == 0) {
 			ret = errno;
 		}
-		free(buf);
+		g_free(buf);
 	}
 
 	g_ptr_array_free(_entries, TRUE);
