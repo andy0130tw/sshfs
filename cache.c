@@ -667,7 +667,7 @@ int cache_load(const char *in_path) {
 
 		char* path = g_strdup(entry->key);
 		DcacheEntry* value = entry->value;
-		struct node* node = g_malloc(sizeof(struct node));
+		struct node* node = g_new0(struct node, 1);
 
 		fprintf(stderr, "Reading cache entry: %s\n", path);
 
@@ -686,7 +686,7 @@ int cache_load(const char *in_path) {
 
 		if (value->opt_dir_case == DCACHE_ENTRY__OPT_DIR_DIR) {
 			size_t n = value->dir->n_values;
-			char** dirents = g_malloc(sizeof(char*) * (n+1));
+			char** dirents = g_new(char*, n + 1);
 			char** ds = value->dir->values;
 			for (size_t i = 0; i < n; i++) {
 				dirents[i] = g_strdup(ds[i]);
@@ -731,13 +731,13 @@ int cache_dump(const char *out_path, size_t* entries_count) {
 	while (g_hash_table_iter_next(&iter, &path, &_node)) {
 		struct node *node = _node;
 
-		Dcache__EntriesEntry* entry = g_malloc(sizeof(Dcache__EntriesEntry));
-		g_ptr_array_add(buffers, entry);
+		Dcache__EntriesEntry* entry = g_new(Dcache__EntriesEntry, 1);
 		dcache__entries_entry__init(entry);
+		g_ptr_array_add(buffers, entry);
 
-		DcacheEntry* entry_value = g_malloc(sizeof(DcacheEntry));
-		g_ptr_array_add(buffers, entry_value);
+		DcacheEntry* entry_value = g_new(DcacheEntry, 1);
 		dcache_entry__init(entry_value);
+		g_ptr_array_add(buffers, entry_value);
 
 		entry->key = (char*) path;
 		entry->value = entry_value;
@@ -756,9 +756,9 @@ int cache_dump(const char *out_path, size_t* entries_count) {
 		}
 
 		if (node->dir_valid - now >= 0) {
-			ListString* dirs = g_malloc(sizeof(ListString));
-			g_ptr_array_add(buffers, dirs);
+			ListString* dirs = g_new(ListString , 1);
 			list_string__init(dirs);
+			g_ptr_array_add(buffers, dirs);
 
 			char** dir_iter = node->dir;
 			dirs->values = dir_iter;
