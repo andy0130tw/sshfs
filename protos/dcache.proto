@@ -1,0 +1,29 @@
+syntax = "proto3";
+
+message Dcache {
+    DcacheMeta metadata = 1;
+    map<string, DcacheEntry> entries = 2;
+}
+
+message ListString {
+    repeated string values = 1;
+}
+
+message DcacheMeta {
+    uint32 version = 1;
+    uint32 stat_size = 2;
+    uint64 creation_time = 3;
+    string note = 4;
+}
+
+message DcacheEntry {
+    oneof opt_stat {
+        bytes stat = 1;
+    }
+    oneof opt_link {
+        string link = 2;
+    }
+    oneof opt_dir {
+        ListString dir = 3;
+    }
+}

@@ -44,9 +44,19 @@ endif
 configure_file(output: 'config.h',
                configuration : cfg)
 
+protoc = find_program('protoc')
+
+proto_gen = generator(protoc, \
+  output    : ['@BASENAME@.pb-c.c', '@BASENAME@.pb-c.h'],
+  arguments : ['--proto_path=@CURRENT_SOURCE_DIR@/protos', '--c_out=@BUILD_DIR@', '@INPUT@'])
+
+dcache_proto = proto_gen.process('protos/dcache.proto')
+sshfs_sources += [ dcache_proto ]
+
 sshfs_deps = [ dependency('fuse3', version: '>= 3.1.0'),
                dependency('glib-2.0'),
-               dependency('gthread-2.0') ]
+               dependency('gthread-2.0'),
+               dependency('libprotobuf-c', version: '>= 1.0.0') ]
 
 executable('sshfs', sshfs_sources,
            include_directories: include_dirs,

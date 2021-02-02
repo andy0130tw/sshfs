@@ -14,3 +14,6 @@ int cache_parse_options(struct fuse_args *args);
 void cache_add_attr(const char *path, const struct stat *stbuf, uint64_t wrctr);
 void cache_invalidate(const char *path);
 uint64_t cache_get_write_ctr(void);
+
+int cache_load(const char *in_path);
+int cache_dump(const char *out_path, size_t* entries_count);

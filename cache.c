@@ -15,6 +15,8 @@
 #include <glib.h>
 #include <pthread.h>
 
+#include "dcache.pb-c.h"
+
 #define DEFAULT_CACHE_TIMEOUT_SECS 20
 #define DEFAULT_MAX_CACHE_SIZE 10000
 #define DEFAULT_CACHE_CLEAN_INTERVAL_SECS 60
@@ -36,6 +38,7 @@ struct cache {
 };
 
 static struct cache cache;
+static const size_t STAT_SIZE = sizeof(struct stat);
 
 struct node {
 	struct stat stat;
@@ -612,4 +615,197 @@ int cache_parse_options(struct fuse_args *args)
 	cache.min_clean_interval_secs = DEFAULT_MIN_CACHE_CLEAN_INTERVAL_SECS;
 
 	return fuse_opt_parse(args, &cache, cache_opts, NULL);
+}
+
+int cache_load(const char *in_path) {
+	FILE* f = fopen(in_path, "r");
+	if (f == NULL) {
+		// if the dcache does not exist, that's ok
+		return errno == ENOENT ? 0 : errno;
+	}
+
+	fseek(f, 0, SEEK_END);
+	size_t sz = ftell(f);
+	rewind(f);
+
+	int ret;
+
+	void* buf = g_malloc(sz);
+	ret = fread(buf, sz, 1, f);
+	if (ret <= 0) {
+		free(buf);
+		ret = errno;
+		goto done;
+	}
+
+	Dcache* store_root = dcache__unpack(NULL, sz, buf);
+	free(buf);
+
+	if (store_root == NULL) {
+		fprintf(stderr, "Corrupted dcache [%s], ignored.\n", in_path);
+		ret = 0;
+		goto done;
+	}
+
+	size_t n_entries = store_root->n_entries;
+
+	int stat_sz_read = store_root->metadata->stat_size;
+	fprintf(stderr, "STAT SIZE = %d\n", stat_sz_read);
+	fprintf(stderr, "CREATED AT = %ld\n", store_root->metadata->creation_time);
+	fprintf(stderr, "LIST LEN = %zd\n", n_entries);
+
+	if (stat_sz_read != STAT_SIZE) {
+		fprintf(stderr, "Inconsistent stat size (%d read, %ld expected)!!\n",
+			stat_sz_read, STAT_SIZE);
+		goto done_free_unpacked;
+	}
+
+	pthread_mutex_lock(&cache.lock);
+
+	struct node* cvalues = calloc(n_entries, sizeof(struct node));
+
+	for(size_t i = 0; i < n_entries; i++) {
+		Dcache__EntriesEntry* entry = store_root->entries[i];
+
+		char* path = g_strdup(entry->key);
+		DcacheEntry* value = entry->value;
+		struct node* node = &cvalues[i];
+
+		fprintf(stderr, "Reading cache entry: %s\n", path);
+
+		node->valid = LONG_MAX;
+
+		if (value->opt_stat_case == DCACHE_ENTRY__OPT_STAT_STAT) {
+			ProtobufCBinaryData* stat_ptr = &value->stat;
+			memcpy(&node->stat, stat_ptr->data, MIN(STAT_SIZE, stat_ptr->len));
+			node->stat_valid = LONG_MAX;
+		}
+
+		if (value->opt_link_case == DCACHE_ENTRY__OPT_LINK_LINK) {
+			strcpy(node->link, value->link);
+			node->link_valid = LONG_MAX;
+		}
+
+		if (value->opt_dir_case == DCACHE_ENTRY__OPT_DIR_DIR) {
+			size_t n = value->dir->n_values;
+			char** dirents = g_malloc(sizeof(char*) * (n+1));
+			char** ds = value->dir->values;
+			for (size_t i = 0; i < n; i++) {
+				dirents[i] = g_strdup(ds[i]);
+			}
+			dirents[n] = NULL;
+			node->dir = dirents;
+			node->dir_valid = LONG_MAX;
+		}
+
+		g_hash_table_insert(cache.table, path, node);
+	}
+
+	pthread_mutex_unlock(&cache.lock);
+
+done_free_unpacked:
+	dcache__free_unpacked(store_root, NULL);
+done:
+	ret = fclose(f);
+	return ret;
+}
+
+int cache_dump(const char *out_path, size_t* entries_count) {
+	Dcache store_root = DCACHE__INIT;
+
+	DcacheMeta meta = DCACHE_META__INIT;
+	meta.version = 42;
+	meta.stat_size = STAT_SIZE;
+	store_root.metadata = &meta;
+
+	GPtrArray* _entries = g_ptr_array_new();
+
+	GHashTableIter iter;
+	gpointer path, _node;
+
+	pthread_mutex_lock(&cache.lock);
+
+	time_t now = time(NULL);
+	meta.creation_time = now;
+	GPtrArray* buffers = g_ptr_array_new();
+
+	g_hash_table_iter_init(&iter, cache.table);
+	while (g_hash_table_iter_next(&iter, &path, &_node)) {
+		struct node *node = _node;
+
+		Dcache__EntriesEntry* entry = g_malloc(sizeof(Dcache__EntriesEntry));
+		g_ptr_array_add(buffers, entry);
+		dcache__entries_entry__init(entry);
+
+		DcacheEntry* entry_value = g_malloc(sizeof(DcacheEntry));
+		g_ptr_array_add(buffers, entry_value);
+		dcache_entry__init(entry_value);
+
+		entry->key = (char*) path;
+		entry->value = entry_value;
+		g_ptr_array_add(_entries, entry);
+
+		if (node->stat_valid - now >= 0) {
+			entry_value->opt_stat_case = DCACHE_ENTRY__OPT_STAT_STAT;
+			entry_value->stat = (ProtobufCBinaryData) {
+				.len = STAT_SIZE,
+				.data = (uint8_t*) &node->stat,
+			};
+		}
+
+		if (node->link_valid - now >= 0) {
+			entry_value->opt_link_case = DCACHE_ENTRY__OPT_LINK_LINK;
+		}
+
+		if (node->dir_valid - now >= 0) {
+			ListString* dirs = g_malloc(sizeof(ListString));
+			g_ptr_array_add(buffers, dirs);
+			list_string__init(dirs);
+
+			char** dir_iter = node->dir;
+			dirs->values = dir_iter;
+			while (*dir_iter) {
+				dirs->n_values++;
+				dir_iter++;
+			}
+
+			entry_value->opt_dir_case = DCACHE_ENTRY__OPT_DIR_DIR;
+			entry_value->dir = dirs;
+		}
+    }
+
+	store_root.n_entries = _entries->len;
+	store_root.entries = (Dcache__EntriesEntry **) _entries->pdata;
+
+	if (entries_count) {
+		*entries_count = _entries->len;
+	}
+
+    // because of referring node's data,
+    // we need to output the content before releasing the lock
+    int ret;
+	FILE* f = fopen(out_path, "w");
+
+	if (f == NULL) {
+		ret = errno;
+	} else {
+		size_t len = dcache__get_packed_size(&store_root);
+		void* buf = g_malloc(len);
+		dcache__pack(&store_root, buf);
+		size_t written = fwrite(buf, len, 1, f);
+		if (written == 0) {
+			ret = errno;
+		}
+		free(buf);
+	}
+
+	g_ptr_array_free(_entries, TRUE);
+
+	g_ptr_array_add(buffers, NULL);
+	g_strfreev((char**) g_ptr_array_free(buffers, FALSE));
+
+    ret = fclose(f);
+	pthread_mutex_unlock(&cache.lock);
+
+    return ret;
 }

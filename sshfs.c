@@ -4337,6 +4337,14 @@ int main(int argc, char *argv[])
 	if (res == -1)
 		exit(1);
 
+	char* cwd_orig = getcwd(NULL, 0);
+	if (!cwd_orig) {
+		perror("Error getting old working directory");
+		exit(1);
+	}
+	char* cache_persist_path = malloc(strlen(cwd_orig) + 32);
+	sprintf(cache_persist_path, "%s/%s", cwd_orig, "dcache.dump");
+
 	sshfs.randseed = time(0);
 
 	if (sshfs.max_read > 65536)
@@ -4350,10 +4358,19 @@ int main(int argc, char *argv[])
 	g_free(tmp);
 	g_free(fsname);
 
-	if(sshfs.dir_cache)
+	if(sshfs.dir_cache) {
 		sshfs.op = cache_wrap(&sshfs_oper);
-	else
+
+		int ret = cache_load(cache_persist_path);
+		if (ret > 0) {
+			perror("Error loading dcache... Remove the file if that causes problems");
+			exit(1);
+		} else if (ret != 0) {
+			exit(-ret);
+		}
+	} else {
 		sshfs.op = &sshfs_oper;
+	}
 	fuse = fuse_new(&args, sshfs.op,
 			sizeof(struct fuse_operations), NULL);
 	if(fuse == NULL)
@@ -4405,9 +4422,9 @@ int main(int argc, char *argv[])
 	else
 		res = 0;
 
-	fuse_remove_signal_handlers(se);
 	fuse_unmount(fuse);
 	fuse_destroy(fuse);
+	fuse_remove_signal_handlers(se);
 
 	if (sshfs.debug) {
 		unsigned int avg_rtt = 0;
@@ -4428,9 +4445,23 @@ int main(int argc, char *argv[])
 		      sshfs.num_connect);
 	}
 
+	if (sshfs.dir_cache) {
+		DEBUG("Ready to persist dcache to \"%s\"\n", cache_persist_path);
+		size_t cnt;
+		int res = cache_dump(cache_persist_path, &cnt);
+		if (res) {
+			DEBUG("Failed to save dcache: %s\n", strerror(res));
+		} else {
+			DEBUG("Persisted dcache of %zd entries.\n", cnt);
+		}
+	}
+
 	fuse_opt_free_args(&args);
 	fuse_opt_free_args(&sshfs.ssh_args);
 	free(sshfs.directport);
+
+	free(cwd_orig);
+	free(cache_persist_path);
 
 	return res;
 }
