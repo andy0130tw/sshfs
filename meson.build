@@ -44,7 +44,7 @@ endif
 configure_file(output: 'config.h',
                configuration : cfg)
 
-protoc = find_program('protoc')
+protoc = find_program('protoc-c')
 
 proto_gen = generator(protoc, \
   output    : ['@BASENAME@.pb-c.c', '@BASENAME@.pb-c.h'],
