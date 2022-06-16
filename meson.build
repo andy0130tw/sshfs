@@ -1,4 +1,4 @@
-project('sshfs', 'c', version: '3.7.1',
+project('sshfs', 'c', version: '3.7.3',
         meson_version: '>= 0.40',
         default_options: [ 'buildtype=debugoptimized' ])
 
@@ -26,7 +26,7 @@ endif
 
 
 rst2man = find_program('rst2man', 'rst2man.py', required: false)
-  
+
 cfg = configuration_data()
 
 cfg.set_quoted('PACKAGE_VERSION', meson.project_version())
@@ -79,4 +79,3 @@ meson.add_install_script('utils/install_helper.sh',
 
 
 subdir('test')
-

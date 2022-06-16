@@ -1,3 +1,26 @@
+Release 3.7.3 (2022-05-26)
+--------------------------
+
+* Minor bugfixes.
+
+* This is the last release from the current maintainer. SSHFS is now no longer maintained
+  or developed. Github issue tracking and pull requests have therefore been disabled. The
+  mailing list (see below) is still available for use.
+
+  If you would like to take over this project, you are welcome to do so. Please fork it
+  and develop the fork for a while. Once there has been 6 months of reasonable activity,
+  please contact Nikolaus@rath.org and I'll be happy to give you ownership of this
+  repository or replace with a pointer to the fork.
+
+
+Release 3.7.2 (2021-06-08)
+--------------------------
+
+* Added a secondary check so if a mkdir request fails with EPERM an access request will be
+  tried - returning EEXIST if the access was successful.
+	Fixes: https://github.com/libfuse/sshfs/issues/243
+
+
 Release 3.7.1 (2020-11-09)
 --------------------------
 
@@ -17,7 +40,7 @@ Release 3.7.0 (2020-01-03)
   needed anymore. If you depend on this workaround, please let the SSHFS maintainers know,
   otherwise support for the workaround will be removed completely in a future version.
 
-  
+
 Release 3.6.0 (2019-11-03)
 --------------------------
 
@@ -100,13 +123,13 @@ Release 3.1.0 (2017-08-04)
 
 * For improved backwards compatibility, SSHFS now also silently
   accepts the old ``-o cache_*`` options.
-  
+
 Release 3.0.0 (2017-07-08)
 --------------------------
 
 * sshfs now requires libfuse 3.1.0 or newer.
 * When supported by the kernel, sshfs now uses writeback caching.
-* The `cache` option has been renamed to `dir_cache` for clarity.  
+* The `cache` option has been renamed to `dir_cache` for clarity.
 * Added unit tests
 * --debug now behaves like -o debug_sshfs, i.e. it enables sshfs
   debugging messages rather than libfuse debugging messages.
@@ -121,7 +144,7 @@ Release 3.0.0 (2017-07-08)
 * Removed support for `-o workaround=all`. Workarounds should always
   enabled explicitly and only when needed. There is no point in always
   enabling a potentially changing set of workarounds.
-  
+
 Release 2.9 (2017-04-17)
 ------------------------
 
@@ -160,14 +183,14 @@ Release 2.4 (2012-03-08)
 ------------------------
 
 * New `slave` option.
-* New `idmap`, `uidmap` and `gidmap` options.  
+* New `idmap`, `uidmap` and `gidmap` options.
 * Various small bugfixes.
 
 Release 2.3 (2011-07-01)
 ------------------------
 
 * Support hard link creation if server is OpenSSH 5.7 or later
-* Small improvements and bug fixes  
+* Small improvements and bug fixes
 * Check mount point and options before connecting to ssh server
 * New 'delay_connect' option
 
@@ -180,7 +203,7 @@ Release 2.2 (2008-10-20)
 Release 2.1 (2008-07-11)
 ------------------------
 
-* Small improvements and bug fixes  
+* Small improvements and bug fixes
 
 Release 2.0 (2008-04-23)
 ------------------------
