@@ -113,10 +113,6 @@
 #define SSH_FXF_TRUNC           0x00000010
 #define SSH_FXF_EXCL            0x00000020
 
-/* statvfs@openssh.com f_flag flags */
-#define SSH2_FXE_STATVFS_ST_RDONLY	0x00000001
-#define SSH2_FXE_STATVFS_ST_NOSUID	0x00000002
-
 #define SFTP_EXT_POSIX_RENAME "posix-rename@openssh.com"
 #define SFTP_EXT_STATVFS "statvfs@openssh.com"
 #define SFTP_EXT_HARDLINK "hardlink@openssh.com"
