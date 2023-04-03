@@ -90,11 +90,22 @@
 #define SSH_FXP_EXTENDED          200
 #define SSH_FXP_EXTENDED_REPLY    201
 
-#define SSH_FILEXFER_ATTR_SIZE          0x00000001
-#define SSH_FILEXFER_ATTR_UIDGID        0x00000002
-#define SSH_FILEXFER_ATTR_PERMISSIONS   0x00000004
-#define SSH_FILEXFER_ATTR_ACMODTIME     0x00000008
-#define SSH_FILEXFER_ATTR_EXTENDED      0x80000000
+#define SSH_FILEXFER_ATTR_SIZE               0x00000001
+#define SSH_FILEXFER_ATTR_PERMISSIONS        0x00000004
+#define SSH_FILEXFER_ATTR_ACCESSTIME         0x00000008
+#define SSH_FILEXFER_ATTR_CREATETIME         0x00000010
+#define SSH_FILEXFER_ATTR_MODIFYTIME         0x00000020
+#define SSH_FILEXFER_ATTR_ACL                0x00000040
+#define SSH_FILEXFER_ATTR_OWNERGROUP         0x00000080
+#define SSH_FILEXFER_ATTR_SUBSECOND_TIMES    0x00000100
+#define SSH_FILEXFER_ATTR_BITS               0x00000200
+#define SSH_FILEXFER_ATTR_ALLOCATION_SIZE    0x00000400
+#define SSH_FILEXFER_ATTR_TEXT_HINT          0x00000800
+#define SSH_FILEXFER_ATTR_MIME_TYPE          0x00001000
+#define SSH_FILEXFER_ATTR_LINK_COUNT         0x00002000
+#define SSH_FILEXFER_ATTR_UNTRANSLATED_NAME  0x00004000
+#define SSH_FILEXFER_ATTR_CTIME              0x00008000
+#define SSH_FILEXFER_ATTR_EXTENDED           0x80000000
 
 #define SSH_FX_OK                            0
 #define SSH_FX_EOF                           1
@@ -118,7 +129,7 @@
 #define SFTP_EXT_HARDLINK "hardlink@openssh.com"
 #define SFTP_EXT_FSYNC "fsync@openssh.com"
 
-#define PROTO_VERSION 3
+#define PROTO_VERSION 4
 
 #define MY_EOF 1
 
@@ -206,6 +217,11 @@
 #ifdef __APPLE__
     static char sshfs_program_path[PATH_MAX] = { 0 };
 #endif /* __APPLE__ */
+
+struct sftptime {
+    int64_t seconds;
+    uint32_t nanoseconds;
+};
 
 struct conn {
     pthread_mutex_t lock_write;
@@ -838,32 +854,107 @@ static inline int buf_get_string(struct buffer *buf, char **str)
 
 static int buf_get_attrs(struct buffer *buf, struct stat *stbuf, int *flagsp)
 {
+    // Following lack support in `libfuse`:
+    //
+    // - `acl`
+    // - `createtime`
+    // - `attrib_bits`
+    // - `text_hint`
+    // - `mime_type`
+    // - `untranslated_name`
+    // - Extended attributes
     uint32_t flags;
+    uint8_t file_type;
     uint64_t size = 0;
-    uint32_t uid = 0;
-    uint32_t gid = 0;
-    uint32_t atime = 0;
-    uint32_t mtime = 0;
+    char *uname = NULL;
+    char *gname = NULL;
+    struct sftptime atime = { 0, 0 };
+    struct sftptime mtime = { 0, 0 };
+    struct sftptime ctime = { 0, 0 };
     uint32_t mode = S_IFREG | 0777;
+    uint32_t link_count = 1;
 
     if (buf_get_uint32(buf, &flags) == -1)
         return -EIO;
     if (flagsp)
         *flagsp = flags;
+
+    buf_get_uint8(buf, &file_type);
+
     if ((flags & SSH_FILEXFER_ATTR_SIZE) &&
         buf_get_uint64(buf, &size) == -1)
         return -EIO;
-    if ((flags & SSH_FILEXFER_ATTR_UIDGID) &&
-        (buf_get_uint32(buf, &uid) == -1 ||
-         buf_get_uint32(buf, &gid) == -1))
-        return -EIO;
+    if (flags & SSH_FILEXFER_ATTR_OWNERGROUP) {
+        if (buf_get_string(buf, &uname) == -1 || buf_get_string(buf, &gname) == -1)
+            return -EIO;
+    }
     if ((flags & SSH_FILEXFER_ATTR_PERMISSIONS) &&
         buf_get_uint32(buf, &mode) == -1)
-        return -EIO;
-    if ((flags & SSH_FILEXFER_ATTR_ACMODTIME)) {
-        if (buf_get_uint32(buf, &atime) == -1 ||
-            buf_get_uint32(buf, &mtime) == -1)
             return -EIO;
+    if (flags & SSH_FILEXFER_ATTR_ACCESSTIME) {
+        if (buf_get_uint64(buf, (uint64_t *)&atime.seconds) == -1)
+            return -EIO;
+        if (flags & SSH_FILEXFER_ATTR_SUBSECOND_TIMES) {
+            if (buf_get_uint32(buf, &atime.nanoseconds) == -1)
+                return -EIO;
+        }
+    }
+    if (flags & SSH_FILEXFER_ATTR_CREATETIME) {
+        struct sftptime createtime;
+        if (buf_get_uint64(buf, (uint64_t *)&createtime.seconds) == -1)
+            return -EIO;
+        if (flags & SSH_FILEXFER_ATTR_SUBSECOND_TIMES) {
+            if (buf_get_uint32(buf, &createtime.nanoseconds) == -1)
+                return -EIO;
+        }
+    }
+    if (flags & SSH_FILEXFER_ATTR_MODIFYTIME) {
+        if (buf_get_uint64(buf, (uint64_t *)&mtime.seconds) == -1)
+            return -EIO;
+        if (flags & SSH_FILEXFER_ATTR_SUBSECOND_TIMES) {
+            if (buf_get_uint32(buf, &mtime.nanoseconds) == -1)
+                return -EIO;
+        }
+    }
+    if (flags & SSH_FILEXFER_ATTR_CTIME) {
+        if (buf_get_uint64(buf, (uint64_t *)&ctime.seconds) == -1)
+            return -EIO;
+        if (flags & SSH_FILEXFER_ATTR_SUBSECOND_TIMES) {
+            if (buf_get_uint32(buf, &ctime.nanoseconds) == -1)
+                return -EIO;
+        }
+    }
+    if (flags & SSH_FILEXFER_ATTR_ACL) {
+        char *acl;
+        if (buf_get_string(buf, &acl) == -1)
+            return -EIO;
+        free(acl);
+    }
+    if ((flags & SSH_FILEXFER_ATTR_BITS)) {
+        uint32_t attrib_bits;
+        if (buf_get_uint32(buf, &attrib_bits) == -1)
+            return -EIO;
+    }
+    if ((flags & SSH_FILEXFER_ATTR_TEXT_HINT)) {
+        uint8_t text_hint;
+        if (buf_get_uint8(buf, &text_hint) == -1)
+            return -EIO;
+    }
+    if (flags & SSH_FILEXFER_ATTR_MIME_TYPE) {
+        char *mime_type;
+        if (buf_get_string(buf, &mime_type) == -1)
+            return -EIO;
+        free(mime_type);
+    }
+    if ((flags & SSH_FILEXFER_ATTR_LINK_COUNT)) {
+        if (buf_get_uint32(buf, &link_count) == -1)
+            return -EIO;
+    }
+    if (flags & SSH_FILEXFER_ATTR_UNTRANSLATED_NAME) {
+        char *untranslated_name;
+        if (buf_get_string(buf, &untranslated_name) == -1)
+            return -EIO;
+        free(untranslated_name);
     }
     if ((flags & SSH_FILEXFER_ATTR_EXTENDED)) {
         uint32_t extcount;
@@ -896,7 +987,7 @@ static int buf_get_attrs(struct buffer *buf, struct stat *stbuf, int *flagsp)
 
     memset(stbuf, 0, sizeof(struct stat));
     stbuf->st_mode = mode;
-    stbuf->st_nlink = 1;
+    stbuf->st_nlink = link_count;
     stbuf->st_size = size;
     if (sshfs.blksize) {
         stbuf->st_blksize = sshfs.blksize;
@@ -905,8 +996,18 @@ static int buf_get_attrs(struct buffer *buf, struct stat *stbuf, int *flagsp)
     }
     stbuf->st_uid = uid;
     stbuf->st_gid = gid;
-    stbuf->st_atime = atime;
-    stbuf->st_ctime = stbuf->st_mtime = mtime;
+
+    stbuf->st_atim.tv_sec = atime.seconds;
+    stbuf->st_atim.tv_nsec = atime.nanoseconds;
+    stbuf->st_mtim.tv_sec = mtime.seconds;
+    stbuf->st_mtim.tv_nsec = mtime.nanoseconds;
+    stbuf->st_ctim.tv_sec = ctime.seconds;
+    stbuf->st_ctim.tv_nsec = ctime.nanoseconds;
+
+    if (uname != NULL)
+        free(uname);
+    if (gname != NULL)
+        free(gname);
     return 0;
 }
 
