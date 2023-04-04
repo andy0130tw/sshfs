@@ -2032,9 +2032,6 @@ static void *sshfs_init(struct fuse_conn_info *conn,
     if (!sshfs.delay_connect)
         start_processing_thread(&sshfs.conns[0]);
 
-    // SFTP only supports 1-second time resolution
-    conn->time_gran = 1000000000;
-
     return NULL;
 }
 
