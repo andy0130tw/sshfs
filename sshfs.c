@@ -107,6 +107,17 @@
 #define SSH_FILEXFER_ATTR_CTIME              0x00008000
 #define SSH_FILEXFER_ATTR_EXTENDED           0x80000000
 
+#define USED_ATTRS ( \
+    SSH_FILEXFER_ATTR_SIZE | \
+    SSH_FILEXFER_ATTR_OWNERGROUP | \
+    SSH_FILEXFER_ATTR_PERMISSIONS | \
+    SSH_FILEXFER_ATTR_ACCESSTIME | \
+    SSH_FILEXFER_ATTR_MODIFYTIME | \
+    SSH_FILEXFER_ATTR_CTIME | \
+    SSH_FILEXFER_ATTR_SUBSECOND_TIMES | \
+    SSH_FILEXFER_ATTR_LINK_COUNT \
+)
+
 #define SSH_FX_OK                            0
 #define SSH_FX_EOF                           1
 #define SSH_FX_NO_SUCH_FILE                  2
@@ -2904,6 +2915,7 @@ static int sshfs_open_common(const char *path, mode_t mode,
     buf_clear(&buf);
     buf_add_path(&buf, path);
     type = sshfs.follow_symlinks ? SSH_FXP_STAT : SSH_FXP_LSTAT;
+    buf_add_uint32(&buf, USED_ATTRS);
     err2 = sftp_request(sf->conn, type, &buf, SSH_FXP_ATTRS, &outbuf);
     if (!err2) {
         err2 = buf_get_attrs(&outbuf, &stbuf, NULL, NULL, NULL);
@@ -3515,12 +3527,14 @@ static int sshfs_getattr(const char *path, struct stat *stbuf,
     buf_init(&buf, 0);
     if(sf == NULL) {
         buf_add_path(&buf, path);
+        buf_add_uint32(&buf, USED_ATTRS);
         err = sftp_request(get_conn(sf, path),
                            sshfs.follow_symlinks ? SSH_FXP_STAT : SSH_FXP_LSTAT,
                            &buf, SSH_FXP_ATTRS, &outbuf);
     }
     else {
         buf_add_buf(&buf, &sf->handle);
+        buf_add_uint32(&buf, USED_ATTRS);
         err = sftp_request(sf->conn, SSH_FXP_FSTAT, &buf,
                            SSH_FXP_ATTRS, &outbuf);
     }
