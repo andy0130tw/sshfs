@@ -2717,14 +2717,15 @@ static int sshfs_utimens(const char *path, const struct timespec tv[2],
     int err;
     struct buffer buf;
     struct sshfs_file *sf = NULL;
-    time_t asec = tv[0].tv_sec, msec = tv[1].tv_sec;
+    struct timespec atime = tv[0], mtime = tv[1];
 
-    struct timeval now;
-    gettimeofday(&now, NULL);
-    if (asec == 0)
-        asec = now.tv_sec;
-    if (msec == 0)
-        msec = now.tv_sec;
+    struct timespec now;
+    clock_gettime(CLOCK_REALTIME, &now);
+
+    if (atime.tv_sec == 0 && atime.tv_nsec == 0)
+        atime = now;
+    if (mtime.tv_sec == 0 && mtime.tv_nsec == 0)
+        mtime = now;
 
     if (fi != NULL) {
         sf = get_sshfs_file(fi);
@@ -2737,9 +2738,16 @@ static int sshfs_utimens(const char *path, const struct timespec tv[2],
         buf_add_path(&buf, path);
     else
         buf_add_buf(&buf, &sf->handle);
-    buf_add_uint32(&buf, SSH_FILEXFER_ATTR_ACMODTIME);
-    buf_add_uint32(&buf, asec);
-    buf_add_uint32(&buf, msec);
+
+    buf_add_uint32(
+        &buf,
+        SSH_FILEXFER_ATTR_ACCESSTIME | SSH_FILEXFER_ATTR_MODIFYTIME | SSH_FILEXFER_ATTR_SUBSECOND_TIMES
+    );
+    buf_add_uint8(&buf, SSH_FILEXFER_TYPE_UNKNOWN);
+    buf_add_uint64(&buf, atime.tv_sec);
+    buf_add_uint32(&buf, atime.tv_nsec);
+    buf_add_uint64(&buf, mtime.tv_sec);
+    buf_add_uint32(&buf, mtime.tv_nsec);
 
     err = sftp_request(get_conn(sf, path),
                        sf == NULL ? SSH_FXP_SETSTAT : SSH_FXP_FSETSTAT,
