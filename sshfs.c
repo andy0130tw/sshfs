@@ -1844,6 +1844,7 @@ static void sftp_detect_uid(struct conn *conn)
 
     buf_init(&buf, 5);
     buf_add_string(&buf, ".");
+    buf_add_uint32(&buf, SSH_FILEXFER_ATTR_OWNERGROUP);
     buf_to_iov(&buf, &iov[0]);
     if (sftp_send_iov(conn, SSH_FXP_STAT, id, iov, 1) == -1)
         goto out;
@@ -1902,6 +1903,7 @@ static int sftp_check_root(struct conn *conn, const char *base_path)
 
     buf_init(&buf, 0);
     buf_add_string(&buf, remote_dir);
+    buf_add_uint32(&buf, SSH_FILEXFER_ATTR_PERMISSIONS);
     buf_to_iov(&buf, &iov[0]);
     if (sftp_send_iov(conn, SSH_FXP_LSTAT, id, iov, 1) == -1)
         goto out;
