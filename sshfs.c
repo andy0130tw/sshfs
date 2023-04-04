@@ -327,7 +327,7 @@ struct sshfs {
     int follow_symlinks;
     int no_check_root;
     int detect_uid;
-    int idmap;
+    int namemap;
     int nomap;
     int disable_hardlink;
     int dir_cache;
@@ -335,12 +335,12 @@ struct sshfs {
     int show_help;
     int singlethread;
     char *mountpoint;
-    char *uid_file;
-    char *gid_file;
-    GHashTable *uid_map;
-    GHashTable *gid_map;
-    GHashTable *r_uid_map;
-    GHashTable *r_gid_map;
+    char *uname_file;
+    char *gname_file;
+    GHashTable *uname_to_id; // Map remote uname to local UID
+    GHashTable *gname_to_id; // Map remote gname to local GID
+    GHashTable *uid_to_name; // Map local UID to remote uname
+    GHashTable *gid_to_name; // Map local GID to remote gname
     unsigned max_read;
     unsigned max_write;
     unsigned ssh_ver;
@@ -366,11 +366,11 @@ struct sshfs {
     int ptypassivefd;
     int connvers;
     int server_version;
-    unsigned remote_uid;
+    char *remote_uname;
     unsigned local_uid;
-    unsigned remote_gid;
+    char *remote_gname;
     unsigned local_gid;
-    int remote_uid_detected;
+    int remote_uname_detected;
     unsigned blksize;
     char *progname;
     long modifver;
@@ -470,9 +470,9 @@ enum {
 };
 
 enum {
-    IDMAP_NONE,
-    IDMAP_USER,
-    IDMAP_FILE,
+    NAMEMAP_NONE,
+    NAMEMAP_USER,
+    NAMEMAP_FILE,
 };
 
 enum {
@@ -491,11 +491,11 @@ static struct fuse_opt sshfs_opts[] = {
     SSHFS_OPT("ssh_protocol=%u",   ssh_ver, 0),
     SSHFS_OPT("-1",                ssh_ver, 1),
     SSHFS_OPT("workaround=%s",     workarounds, 0),
-    SSHFS_OPT("idmap=none",        idmap, IDMAP_NONE),
-    SSHFS_OPT("idmap=user",        idmap, IDMAP_USER),
-    SSHFS_OPT("idmap=file",        idmap, IDMAP_FILE),
-    SSHFS_OPT("uidfile=%s",        uid_file, 0),
-    SSHFS_OPT("gidfile=%s",        gid_file, 0),
+    SSHFS_OPT("namemap=none",      namemap, NAMEMAP_NONE),
+    SSHFS_OPT("namemap=user",      namemap, NAMEMAP_USER),
+    SSHFS_OPT("namemap=file",      namemap, NAMEMAP_FILE),
+    SSHFS_OPT("unamefile=%s",      uname_file, 0),
+    SSHFS_OPT("gnamefile=%s",      gname_file, 0),
     SSHFS_OPT("nomap=ignore",      nomap, NOMAP_IGNORE),
     SSHFS_OPT("nomap=error",       nomap, NOMAP_ERROR),
     SSHFS_OPT("sshfs_sync",        sync_write, 1),
@@ -644,13 +644,27 @@ static int list_empty(const struct list_head *head)
     return head->next == head;
 }
 
-/* given a pointer to the uid/gid, and the mapping table, remap the
- * uid/gid, if necessary */
-static inline int translate_id(uint32_t *id, GHashTable *map)
+static inline int translate_name_to_id(char *name, uint32_t *id, GHashTable *map)
 {
     gpointer id_p;
-    if (g_hash_table_lookup_extended(map, GUINT_TO_POINTER(*id), NULL, &id_p)) {
+    if (g_hash_table_lookup_extended(map, name, NULL, &id_p)) {
         *id = GPOINTER_TO_UINT(id_p);
+        return 0;
+    }
+    switch (sshfs.nomap) {
+    case NOMAP_ERROR: return -1;
+    case NOMAP_IGNORE: return 0;
+    default:
+        fprintf(stderr, "internal error\n");
+        abort();
+    }
+}
+
+static inline int translate_id_to_name(uint32_t id, char **name, GHashTable *map)
+{
+    GString gname;
+    if (g_hash_table_lookup_extended(map, GUINT_TO_POINTER(id), NULL, (gpointer) &gname)) {
+        *name = g_strdup(gname.str);
         return 0;
     }
     switch (sshfs.nomap) {
@@ -852,7 +866,8 @@ static inline int buf_get_string(struct buffer *buf, char **str)
     return 0;
 }
 
-static int buf_get_attrs(struct buffer *buf, struct stat *stbuf, int *flagsp)
+static int buf_get_attrs(struct buffer *buf, struct stat *stbuf, int *flagsp,
+                         char **ret_remote_uname, char **ret_remote_gname)
 {
     // Following lack support in `libfuse`:
     //
@@ -866,8 +881,8 @@ static int buf_get_attrs(struct buffer *buf, struct stat *stbuf, int *flagsp)
     uint32_t flags;
     uint8_t file_type;
     uint64_t size = 0;
-    char *uname = NULL;
-    char *gname = NULL;
+    char *remote_uname = NULL;
+    char *remote_gname = NULL;
     struct sftptime atime = { 0, 0 };
     struct sftptime mtime = { 0, 0 };
     struct sftptime ctime = { 0, 0 };
@@ -885,7 +900,7 @@ static int buf_get_attrs(struct buffer *buf, struct stat *stbuf, int *flagsp)
         buf_get_uint64(buf, &size) == -1)
         return -EIO;
     if (flags & SSH_FILEXFER_ATTR_OWNERGROUP) {
-        if (buf_get_string(buf, &uname) == -1 || buf_get_string(buf, &gname) == -1)
+        if (buf_get_string(buf, &remote_uname) == -1 || buf_get_string(buf, &remote_gname) == -1)
             return -EIO;
     }
     if ((flags & SSH_FILEXFER_ATTR_PERMISSIONS) &&
@@ -972,18 +987,21 @@ static int buf_get_attrs(struct buffer *buf, struct stat *stbuf, int *flagsp)
         }
     }
 
-    if (sshfs.remote_uid_detected) {
-        if (uid == sshfs.remote_uid)
+    unsigned uid, gid;
+    if (sshfs.remote_uname_detected) {
+        if (strcmp(remote_uname, sshfs.remote_uname) == 0)
             uid = sshfs.local_uid;
-        if (gid == sshfs.remote_gid)
+        if (strcmp(remote_gname, sshfs.remote_gname) == 0)
             gid = sshfs.local_gid;
     }
-    if (sshfs.idmap == IDMAP_FILE && sshfs.uid_map)
-        if (translate_id(&uid, sshfs.uid_map) == -1)
-            return -EPERM;
-    if (sshfs.idmap == IDMAP_FILE && sshfs.gid_map)
-        if (translate_id(&gid, sshfs.gid_map) == -1)
-            return -EPERM;
+    if (remote_uname != NULL && remote_gname != NULL) {
+        if (sshfs.namemap == NAMEMAP_FILE && sshfs.uname_to_id)
+            if (translate_name_to_id(remote_uname, &uid, sshfs.uname_to_id) == -1)
+                return -EPERM;
+        if (sshfs.namemap == NAMEMAP_FILE && sshfs.gname_to_id)
+            if (translate_name_to_id(remote_gname, &gid, sshfs.gname_to_id) == -1)
+                return -EPERM;
+    }
 
     memset(stbuf, 0, sizeof(struct stat));
     stbuf->st_mode = mode;
@@ -1004,10 +1022,20 @@ static int buf_get_attrs(struct buffer *buf, struct stat *stbuf, int *flagsp)
     stbuf->st_ctim.tv_sec = ctime.seconds;
     stbuf->st_ctim.tv_nsec = ctime.nanoseconds;
 
-    if (uname != NULL)
-        free(uname);
-    if (gname != NULL)
-        free(gname);
+    if (remote_uname != NULL) {
+        if (ret_remote_uname != NULL) {
+            *ret_remote_uname = remote_uname;
+        } else {
+            free(remote_uname);
+        }
+    }
+    if (remote_gname != NULL) {
+        if (ret_remote_gname != NULL) {
+            *ret_remote_gname = remote_gname;
+        } else {
+            free(remote_gname);
+        }
+    }
     return 0;
 }
 
@@ -1071,7 +1099,7 @@ static int buf_get_entries(struct buffer *buf, void *dbuf,
             return -EIO;
         if (buf_get_string(buf, &longname) != -1) {
             free(longname);
-            err = buf_get_attrs(buf, &stbuf, NULL);
+            err = buf_get_attrs(buf, &stbuf, NULL, NULL, NULL);
             if (!err) {
                 if (sshfs.follow_symlinks &&
                     S_ISLNK(stbuf.st_mode)) {
@@ -1806,6 +1834,7 @@ static int sftp_error_to_errno(uint32_t error)
 static void sftp_detect_uid(struct conn *conn)
 {
     int flags;
+    char *remote_uname, *remote_gname;
     uint32_t id = sftp_get_id();
     uint32_t replid;
     uint8_t type;
@@ -1839,22 +1868,22 @@ static void sftp_detect_uid(struct conn *conn)
         fprintf(stderr, "failed to stat home directory (%i)\n", serr);
         goto out;
     }
-    if (buf_get_attrs(&buf, &stbuf, &flags) != 0)
+    if (buf_get_attrs(&buf, &stbuf, &flags, &remote_uname, &remote_gname) != 0)
         goto out;
 
-    if (!(flags & SSH_FILEXFER_ATTR_UIDGID))
+    if (!(flags & SSH_FILEXFER_ATTR_OWNERGROUP))
         goto out;
 
-    sshfs.remote_uid = stbuf.st_uid;
+    sshfs.remote_uname = remote_uname;
     sshfs.local_uid = getuid();
-    sshfs.remote_gid = stbuf.st_gid;
+    sshfs.remote_gname = remote_gname;
     sshfs.local_gid = getgid();
-    sshfs.remote_uid_detected = 1;
-    DEBUG("remote_uid = %i\n", sshfs.remote_uid);
+    sshfs.remote_uname_detected = 1;
+    DEBUG("remote_uname = %s\n", sshfs.remote_uname);
 
 out:
-    if (!sshfs.remote_uid_detected)
-        fprintf(stderr, "failed to detect remote user ID\n");
+    if (!sshfs.remote_uname_detected)
+        fprintf(stderr, "failed to detect remote user name\n");
 
     buf_free(&buf);
 }
@@ -1900,7 +1929,7 @@ static int sftp_check_root(struct conn *conn, const char *base_path)
         goto out;
     }
 
-    int err2 = buf_get_attrs(&buf, &stbuf, &flags);
+    int err2 = buf_get_attrs(&buf, &stbuf, &flags, NULL, NULL);
     if (err2) {
         err = err2;
         goto out;
@@ -2706,6 +2735,7 @@ static int sshfs_chown(const char *path, uid_t uid, gid_t gid,
                        struct fuse_file_info *fi)
 {
     (void) fi;
+    char *remote_uname = NULL, *remote_gname = NULL;
     int err;
     struct buffer buf;
     struct sshfs_file *sf = NULL;
@@ -2716,27 +2746,27 @@ static int sshfs_chown(const char *path, uid_t uid, gid_t gid,
             return -EIO;
     }
 
-    if (sshfs.remote_uid_detected) {
+    if (sshfs.remote_uname_detected) {
         if (uid == sshfs.local_uid)
-            uid = sshfs.remote_uid;
+            remote_uname = sshfs.remote_uname;
         if (gid == sshfs.local_gid)
-            gid = sshfs.remote_gid;
+            remote_gname = sshfs.remote_gname;
     }
-    if (sshfs.idmap == IDMAP_FILE && sshfs.r_uid_map)
-        if(translate_id(&uid, sshfs.r_uid_map) == -1)
-            return -EPERM;
-    if (sshfs.idmap == IDMAP_FILE && sshfs.r_gid_map)
-        if (translate_id(&gid, sshfs.r_gid_map) == -1)
-            return -EPERM;
+    if (sshfs.namemap == NAMEMAP_FILE && sshfs.uid_to_name)
+        translate_id_to_name(uid, &remote_uname, sshfs.uid_to_name);
+    if (sshfs.namemap == NAMEMAP_FILE && sshfs.gid_to_name)
+        translate_id_to_name(gid, &remote_gname, sshfs.gid_to_name);
+    if (remote_uname == NULL || remote_gname == NULL)
+        return -EPERM;
 
     buf_init(&buf, 0);
     if (sf == NULL)
         buf_add_path(&buf, path);
     else
         buf_add_buf(&buf, &sf->handle);
-    buf_add_uint32(&buf, SSH_FILEXFER_ATTR_UIDGID);
-    buf_add_uint32(&buf, uid);
-    buf_add_uint32(&buf, gid);
+    buf_add_uint32(&buf, SSH_FILEXFER_ATTR_OWNERGROUP);
+    buf_add_string(&buf, remote_uname);
+    buf_add_string(&buf, remote_gname);
 
     // Commutes with pending write(), so we can use any connection
     // if the file is not open.
@@ -2877,7 +2907,7 @@ static int sshfs_open_common(const char *path, mode_t mode,
     type = sshfs.follow_symlinks ? SSH_FXP_STAT : SSH_FXP_LSTAT;
     err2 = sftp_request(sf->conn, type, &buf, SSH_FXP_ATTRS, &outbuf);
     if (!err2) {
-        err2 = buf_get_attrs(&outbuf, &stbuf, NULL);
+        err2 = buf_get_attrs(&outbuf, &stbuf, NULL, NULL, NULL);
         buf_free(&outbuf);
     }
     err = sftp_request_wait(open_req, SSH_FXP_OPEN, SSH_FXP_HANDLE,
@@ -3496,7 +3526,7 @@ static int sshfs_getattr(const char *path, struct stat *stbuf,
                            SSH_FXP_ATTRS, &outbuf);
     }
     if (!err) {
-        err = buf_get_attrs(&outbuf, stbuf, NULL);
+        err = buf_get_attrs(&outbuf, stbuf, NULL, NULL, NULL);
 #ifdef __APPLE__
         stbuf->st_blksize = 0;
 #endif
@@ -3722,13 +3752,13 @@ static void usage(const char *progname)
 "             [no]buflimit     fix buffer fillup bug in server (default: off)\n"
 "             [no]fstat        always use stat() instead of fstat() (default: off)\n"
 "             [no]createmode   always pass mode 0 to create (default: off)\n"
-"    -o idmap=TYPE          user/group ID mapping (default: " IDMAP_DEFAULT ")\n"
+"    -o namemap=TYPE        user/group name mapping (default: " NAMEMAP_DEFAULT ")\n"
 "             none             no translation of the ID space\n"
 "             user             only translate UID/GID of connecting user\n"
-"             file             translate UIDs/GIDs contained in uidfile/gidfile\n"
-"    -o uidfile=FILE        file containing username:remote_uid mappings\n"
-"    -o gidfile=FILE        file containing groupname:remote_gid mappings\n"
-"    -o nomap=TYPE          with idmap=file, how to handle missing mappings\n"
+"             file             translate UIDs/GIDs contained in unamefile/gnamefile\n"
+"    -o unamefile=FILE        file containing username:remote_uname mappings\n"
+"    -o gnamefile=FILE        file containing groupname:remote_gname mappings\n"
+"    -o nomap=TYPE          with namemap=file, how to handle missing mappings\n"
 "             ignore           don't do any re-mapping\n"
 "             error            return an error (default)\n"
 "    -o ssh_command=CMD     execute CMD instead of 'ssh'\n"
@@ -4068,12 +4098,12 @@ static int ssh_connect(void)
 
 /* number of ':' separated fields in a passwd/group file that we care
  * about */
-#define IDMAP_FIELDS 3
+#define NAMEMAP_FIELDS 3
 
-/* given a line from a uidmap or gidmap, parse out the name and id */
-static void parse_idmap_line(char *line, const char* filename,
-                             const unsigned int lineno, uint32_t *ret_id, char **ret_name,
-                             const int eof)
+/* given a line from a unamefile or gnamefile, parse out the name and remote name */
+static void parse_namemap_line(char *line, const char* filename,
+                               const unsigned int lineno, char **ret_remote_name, char **ret_name,
+                               const int eof)
 {
     /* chomp off the trailing newline */
     char *p = line;
@@ -4083,45 +4113,37 @@ static void parse_idmap_line(char *line, const char* filename,
         fprintf(stderr, "%s:%u: line too long\n", filename, lineno);
         exit(1);
     }
-    char *tokens[IDMAP_FIELDS];
+    char *tokens[NAMEMAP_FIELDS];
     char *tok;
     int i;
-    for (i = 0; (tok = strsep(&line, ":")) && (i < IDMAP_FIELDS) ; i++) {
+    for (i = 0; (tok = strsep(&line, ":")) && (i < NAMEMAP_FIELDS) ; i++) {
         tokens[i] = tok;
     }
 
-    char *name_tok, *id_tok;
+    char *name_tok, *remote_name_tok;
     if (i == 2) {
-        /* assume name:id format */
+        /* assume name:remote_name format */
         name_tok = tokens[0];
-        id_tok = tokens[1];
-    } else if (i >= IDMAP_FIELDS) {
-        /* assume passwd/group file format */
+        remote_name_tok = tokens[1];
+    } else if (i >= NAMEMAP_FIELDS) {
+        /* assume group/remote_group format */
         name_tok = tokens[0];
-        id_tok = tokens[2];
+        remote_name_tok = tokens[2];
     } else {
         fprintf(stderr, "%s:%u: unknown format\n", filename, lineno);
         exit(1);
     }
 
-    errno = 0;
-    uint32_t remote_id = strtoul(id_tok, NULL, 10);
-    if (errno) {
-        fprintf(stderr, "Invalid id number on line %u of '%s': %s\n",
-                lineno, filename, strerror(errno));
-        exit(1);
-    }
-
     *ret_name = strdup(name_tok);
-    *ret_id = remote_id;
+    *ret_remote_name = strdup(remote_name_tok);
 }
 
-/* read a uidmap or gidmap */
-static void read_id_map(char *file, uint32_t *(*map_fn)(char *),
-                        const char *name_id, GHashTable **idmap, GHashTable **r_idmap)
+/* read a unamefile or gnamefile */
+static void read_name_map(char *file, uint32_t *(*map_fn)(char *),
+                          const char *name_type, GHashTable **name_to_id, GHashTable **id_to_name)
 {
-    *idmap = g_hash_table_new(NULL, NULL);
-    *r_idmap = g_hash_table_new(NULL, NULL);
+    *name_to_id = g_hash_table_new_full(g_str_hash, g_str_equal, free, NULL);
+    *id_to_name = g_hash_table_new(NULL, NULL);
     FILE *fp;
     char line[LINE_MAX];
     unsigned int lineno = 0;
@@ -4151,27 +4173,26 @@ static void read_id_map(char *file, uint32_t *(*map_fn)(char *),
 
     while (fgets(line, LINE_MAX, fp) != NULL) {
         lineno++;
-        uint32_t remote_id;
-        char *name;
+        char *name, *remote_name;
 
         /* skip blank lines */
         if (line[0] == '\n' || line[0] == '\0')
             continue;
 
-        parse_idmap_line(line, file, lineno, &remote_id, &name, feof(fp));
+        parse_namemap_line(line, file, lineno, &remote_name, &name, feof(fp));
 
         uint32_t *local_id = map_fn(name);
         if (local_id == NULL) {
             /* not found */
-            DEBUG("%s(%u): no local %s\n", name, remote_id, name_id);
+            DEBUG("%s(%s): no local %s\n", name, remote_name, name_type);
             free(name);
             continue;
         }
 
-        DEBUG("%s: remote %s %u => local %s %u\n",
-              name, name_id, remote_id, name_id, *local_id);
-        g_hash_table_insert(*idmap, GUINT_TO_POINTER(remote_id), GUINT_TO_POINTER(*local_id));
-        g_hash_table_insert(*r_idmap, GUINT_TO_POINTER(*local_id), GUINT_TO_POINTER(remote_id));
+        DEBUG("%s: remote %s %s => local %s %u\n",
+              name, name_type, remote_name, name_type, *local_id);
+        g_hash_table_insert(*name_to_id, g_strdup(remote_name), GUINT_TO_POINTER(*local_id));
+        g_hash_table_insert(*id_to_name, GUINT_TO_POINTER(*local_id), g_strdup(remote_name));
         free(name);
         free(local_id);
     }
@@ -4233,12 +4254,12 @@ static uint32_t *groupname_to_gid(char *name)
 
 static inline void load_uid_map(void)
 {
-    read_id_map(sshfs.uid_file, &username_to_uid, "uid", &sshfs.uid_map, &sshfs.r_uid_map);
+    read_name_map(sshfs.uname_file, &username_to_uid, "uid", &sshfs.uname_to_id, &sshfs.uid_to_name);
 }
 
 static inline void load_gid_map(void)
 {
-    read_id_map(sshfs.gid_file, &groupname_to_gid, "gid", &sshfs.gid_map, &sshfs.r_gid_map);
+    read_name_map(sshfs.gname_file, &groupname_to_gid, "gid", &sshfs.gname_to_id, &sshfs.gid_to_name);
 }
 
 #ifdef __APPLE__
@@ -4292,14 +4313,14 @@ int main(int argc, char *argv[])
     sshfs.delay_connect = 0;
     sshfs.passive = 0;
     sshfs.detect_uid = 0;
-    if (strcmp(IDMAP_DEFAULT, "none") == 0) {
-        sshfs.idmap = IDMAP_NONE;
-    } else if (strcmp(IDMAP_DEFAULT, "user") == 0) {
-        sshfs.idmap = IDMAP_USER;
+    if (strcmp(NAMEMAP_DEFAULT, "none") == 0) {
+        sshfs.namemap = NAMEMAP_NONE;
+    } else if (strcmp(NAMEMAP_DEFAULT, "user") == 0) {
+        sshfs.namemap = NAMEMAP_USER;
     } else {
-        fprintf(stderr, "bad idmap default value built into sshfs; "
+        fprintf(stderr, "bad namemap default value built into sshfs; "
                         "assuming none (bad logic in configure script?)\n");
-        sshfs.idmap = IDMAP_NONE;
+        sshfs.namemap = NAMEMAP_NONE;
     }
     sshfs.nomap = NOMAP_ERROR;
     ssh_add_arg("ssh");
@@ -4334,24 +4355,24 @@ int main(int argc, char *argv[])
         exit(1);
     }
 
-    if (sshfs.idmap == IDMAP_USER)
+    if (sshfs.namemap == NAMEMAP_USER)
         sshfs.detect_uid = 1;
-    else if (sshfs.idmap == IDMAP_FILE) {
-        sshfs.uid_map = NULL;
-        sshfs.gid_map = NULL;
-        sshfs.r_uid_map = NULL;
-        sshfs.r_gid_map = NULL;
-        if (!sshfs.uid_file && !sshfs.gid_file) {
-            fprintf(stderr, "need a uidfile or gidfile with idmap=file\n");
+    else if (sshfs.namemap == NAMEMAP_FILE) {
+        sshfs.uname_to_id = NULL;
+        sshfs.gname_to_id = NULL;
+        sshfs.uid_to_name = NULL;
+        sshfs.gid_to_name = NULL;
+        if (!sshfs.uname_file && !sshfs.gname_file) {
+            fprintf(stderr, "need a unamefile or gnamefile with namemap=file\n");
             exit(1);
         }
-        if (sshfs.uid_file)
+        if (sshfs.uname_file)
             load_uid_map();
-        if (sshfs.gid_file)
+        if (sshfs.gname_file)
             load_gid_map();
     }
-    free(sshfs.uid_file);
-    free(sshfs.gid_file);
+    free(sshfs.uname_file);
+    free(sshfs.gname_file);
 
     DEBUG("SSHFS version %s\n", PACKAGE_VERSION);
 

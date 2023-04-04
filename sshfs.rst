@@ -121,25 +121,25 @@ Options
    :createmode: Work around broken servers that produce an error when passing a
                 non-zero mode to create, by always passing a mode of 0.
 
--o idmap=TYPE
-   How to map remote UID/GIDs to local values. Possible values are:
+-o namemap=TYPE
+   How to map remote username/groupnames to local values. Possible values are:
 
-   :none: no translation of the ID space (default).
+   :none: no translation of the name space (default).
 
-   :user: map the UID/GID of the remote user to UID/GID of the
+   :user: map the username/groupname of the remote user to username/groupname of the
             mounting user.
 
-   :file: translate UIDs/GIDs based upon the contents of `--uidfile`
-            and `--gidfile`.
+   :file: translate username/groupname based upon the contents of `--unamefile`
+            and `--gnamefile`.
 
--o uidfile=FILE
-   file containing ``username:uid`` mappings for `-o idmap=file`
+-o unamefile=FILE
+   file containing ``username:remote_username`` mappings for `-o namemap=file`
 
--o gidfile=FILE
-   file containing ``groupname:gid`` mappings for `-o idmap=file`
+-o gnamefile=FILE
+   file containing ``groupname:remote_groupname`` mappings for `-o namemap=file`
 
 -o nomap=TYPE
-   with idmap=file, how to handle missing mappings:
+   with namemap=file, how to handle missing mappings:
 
    :ignore: don't do any re-mapping
    :error:  return an error (default)
