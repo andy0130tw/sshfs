@@ -1104,20 +1104,16 @@ static int buf_get_entries(struct buffer *buf, void *dbuf,
     for (i = 0; i < count; i++) {
         int err = -1;
         char *name;
-        char *longname;
         struct stat stbuf;
         if (buf_get_string(buf, &name) == -1)
             return -EIO;
-        if (buf_get_string(buf, &longname) != -1) {
-            free(longname);
-            err = buf_get_attrs(buf, &stbuf, NULL, NULL, NULL);
-            if (!err) {
-                if (sshfs.follow_symlinks &&
-                    S_ISLNK(stbuf.st_mode)) {
-                    stbuf.st_mode = 0;
-                }
-                filler(dbuf, name, &stbuf, 0, 0);
+        err = buf_get_attrs(buf, &stbuf, NULL, NULL, NULL);
+        if (!err) {
+            if (sshfs.follow_symlinks &&
+                S_ISLNK(stbuf.st_mode)) {
+                stbuf.st_mode = 0;
             }
+            filler(dbuf, name, &stbuf, 0, 0);
         }
         free(name);
         if (err)
