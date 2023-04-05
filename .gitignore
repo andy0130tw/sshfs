@@ -35,3 +35,7 @@ sshfs.1
 /m4
 .deps/
 /build
+
+# Test directories
+/mnt/
+/scratch/
