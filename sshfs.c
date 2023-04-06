@@ -116,6 +116,16 @@
     SSH_FILEXFER_ATTR_LINK_COUNT \
 )
 
+#define SSH_FILEXFER_TYPE_REGULAR            1
+#define SSH_FILEXFER_TYPE_DIRECTORY          2
+#define SSH_FILEXFER_TYPE_SYMLINK            3
+#define SSH_FILEXFER_TYPE_SPECIAL            4
+#define SSH_FILEXFER_TYPE_UNKNOWN            5
+#define SSH_FILEXFER_TYPE_SOCKET             6
+#define SSH_FILEXFER_TYPE_CHAR_DEVICE        7
+#define SSH_FILEXFER_TYPE_BLOCK_DEVICE       8
+#define SSH_FILEXFER_TYPE_FIFO               9
+
 #define SSH_FX_OK                            0
 #define SSH_FX_EOF                           1
 #define SSH_FX_NO_SUCH_FILE                  2
@@ -2426,8 +2436,17 @@ static int sshfs_mkdir(const char *path, mode_t mode)
     struct buffer buf;
     buf_init(&buf, 0);
     buf_add_path(&buf, path);
-    buf_add_uint32(&buf, SSH_FILEXFER_ATTR_PERMISSIONS);
+
+    buf_add_uint32(&buf, SSH_FILEXFER_ATTR_OWNERGROUP | SSH_FILEXFER_ATTR_PERMISSIONS);
+    buf_add_uint8(&buf, SSH_FILEXFER_TYPE_DIRECTORY);
+    if (!sshfs.remote_uname_detected) {
+        fprintf(stderr, "remote user name detection is required to open files\n");
+        return -EINVAL;
+    }
+    buf_add_string(&buf, sshfs.remote_uname);
+    buf_add_string(&buf, sshfs.remote_gname);
     buf_add_uint32(&buf, mode);
+
     // Commutes with pending write(), so we can use any connection
     err = sftp_request(get_conn(NULL, NULL), SSH_FXP_MKDIR, &buf, SSH_FXP_STATUS, NULL);
     buf_free(&buf);
@@ -2805,8 +2824,17 @@ static int sshfs_open_common(const char *path, mode_t mode,
     buf_init(&buf, 0);
     buf_add_path(&buf, path);
     buf_add_uint32(&buf, pflags);
-    buf_add_uint32(&buf, SSH_FILEXFER_ATTR_PERMISSIONS);
+
+    buf_add_uint32(&buf, SSH_FILEXFER_ATTR_OWNERGROUP | SSH_FILEXFER_ATTR_PERMISSIONS);
+    buf_add_uint8(&buf, SSH_FILEXFER_TYPE_REGULAR);
+    if (!sshfs.remote_uname_detected) {
+        fprintf(stderr, "remote user name detection is required to open files\n");
+        return -EINVAL;
+    }
+    buf_add_string(&buf, sshfs.remote_uname);
+    buf_add_string(&buf, sshfs.remote_gname);
     buf_add_uint32(&buf, mode);
+
     buf_to_iov(&buf, &iov);
     sftp_request_send(sf->conn, SSH_FXP_OPEN, &iov, 1, NULL, NULL, 1, NULL,
                       &open_req);
