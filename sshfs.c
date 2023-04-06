@@ -802,6 +802,17 @@ static inline void buf_add_path(struct buffer *buf, const char *path)
     g_free(realpath);
 }
 
+static inline int buf_add_owner_group(struct buffer *buf)
+{
+    if (!sshfs.remote_uname_detected) {
+        fprintf(stderr, "remote user name detection is required to open files\n");
+        return -1;
+    }
+    buf_add_string(buf, sshfs.remote_uname);
+    buf_add_string(buf, sshfs.remote_gname);
+    return 0;
+}
+
 static int buf_check_get(struct buffer *buf, size_t len)
 {
     if (buf->len + len > buf->size) {
@@ -2437,12 +2448,10 @@ static int sshfs_mkdir(const char *path, mode_t mode)
 
     buf_add_uint32(&buf, SSH_FILEXFER_ATTR_OWNERGROUP | SSH_FILEXFER_ATTR_PERMISSIONS);
     buf_add_uint8(&buf, SSH_FILEXFER_TYPE_DIRECTORY);
-    if (!sshfs.remote_uname_detected) {
-        fprintf(stderr, "remote user name detection is required to open files\n");
+    err = buf_add_owner_group(&buf);
+    if (err) {
         return -EINVAL;
     }
-    buf_add_string(&buf, sshfs.remote_uname);
-    buf_add_string(&buf, sshfs.remote_gname);
     buf_add_uint32(&buf, mode);
 
     // Commutes with pending write(), so we can use any connection
@@ -2831,12 +2840,10 @@ static int sshfs_open_common(const char *path, mode_t mode,
 
     buf_add_uint32(&buf, SSH_FILEXFER_ATTR_OWNERGROUP | SSH_FILEXFER_ATTR_PERMISSIONS);
     buf_add_uint8(&buf, SSH_FILEXFER_TYPE_REGULAR);
-    if (!sshfs.remote_uname_detected) {
-        fprintf(stderr, "remote user name detection is required to open files\n");
+    err = buf_add_owner_group(&buf);
+    if (err) {
         return -EINVAL;
     }
-    buf_add_string(&buf, sshfs.remote_uname);
-    buf_add_string(&buf, sshfs.remote_gname);
     buf_add_uint32(&buf, mode);
 
     buf_to_iov(&buf, &iov);
