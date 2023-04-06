@@ -2498,11 +2498,9 @@ static int sshfs_symlink(const char *from, const char *to)
     if (sshfs.server_version < 3)
         return -EPERM;
 
-    /* openssh sftp server doesn't follow standard: link target and
-       link name are mixed up, so we must also be non-standard :( */
     buf_init(&buf, 0);
-    buf_add_string(&buf, from);
     buf_add_path(&buf, to);
+    buf_add_string(&buf, from);
     // Commutes with pending write(), so we can use any connection
     err = sftp_request(get_conn(NULL, NULL), SSH_FXP_SYMLINK, &buf, SSH_FXP_STATUS, NULL);
     buf_free(&buf);
