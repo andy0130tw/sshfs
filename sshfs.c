@@ -2750,9 +2750,16 @@ static int sshfs_utimens(const char *path, const struct timespec tv[2],
 
     buf_add_uint32(
         &buf,
-        SSH_FILEXFER_ATTR_ACCESSTIME | SSH_FILEXFER_ATTR_MODIFYTIME | SSH_FILEXFER_ATTR_SUBSECOND_TIMES
+        SSH_FILEXFER_ATTR_OWNERGROUP |
+        SSH_FILEXFER_ATTR_ACCESSTIME |
+        SSH_FILEXFER_ATTR_MODIFYTIME |
+        SSH_FILEXFER_ATTR_SUBSECOND_TIMES
     );
     buf_add_uint8(&buf, SSH_FILEXFER_TYPE_UNKNOWN);
+    err = buf_add_owner_group(&buf);
+    if (err) {
+        return -EINVAL;
+    }
     buf_add_uint64(&buf, atime.tv_sec);
     buf_add_uint32(&buf, atime.tv_nsec);
     buf_add_uint64(&buf, mtime.tv_sec);
