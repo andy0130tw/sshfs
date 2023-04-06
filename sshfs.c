@@ -478,7 +478,6 @@ enum {
 };
 
 enum {
-    NAMEMAP_NONE,
     NAMEMAP_USER,
     NAMEMAP_FILE,
 };
@@ -499,7 +498,6 @@ static struct fuse_opt sshfs_opts[] = {
     SSHFS_OPT("ssh_protocol=%u",   ssh_ver, 0),
     SSHFS_OPT("-1",                ssh_ver, 1),
     SSHFS_OPT("workaround=%s",     workarounds, 0),
-    SSHFS_OPT("namemap=none",      namemap, NAMEMAP_NONE),
     SSHFS_OPT("namemap=user",      namemap, NAMEMAP_USER),
     SSHFS_OPT("namemap=file",      namemap, NAMEMAP_FILE),
     SSHFS_OPT("unamefile=%s",      uname_file, 0),
@@ -3652,7 +3650,6 @@ static void usage(const char *progname)
 "             [no]fstat        always use stat() instead of fstat() (default: off)\n"
 "             [no]createmode   always pass mode 0 to create (default: off)\n"
 "    -o namemap=TYPE        user/group name mapping (default: " NAMEMAP_DEFAULT ")\n"
-"             none             no translation of the ID space\n"
 "             user             only translate UID/GID of connecting user\n"
 "             file             translate UIDs/GIDs contained in unamefile/gnamefile\n"
 "    -o unamefile=FILE        file containing username:remote_uname mappings\n"
@@ -4211,14 +4208,14 @@ int main(int argc, char *argv[])
     sshfs.delay_connect = 0;
     sshfs.passive = 0;
     sshfs.detect_uid = 0;
-    if (strcmp(NAMEMAP_DEFAULT, "none") == 0) {
-        sshfs.namemap = NAMEMAP_NONE;
-    } else if (strcmp(NAMEMAP_DEFAULT, "user") == 0) {
+    if (strcmp(NAMEMAP_DEFAULT, "user") == 0) {
         sshfs.namemap = NAMEMAP_USER;
+    } else if (strcmp(NAMEMAP_DEFAULT, "file") == 0) {
+        sshfs.namemap = NAMEMAP_FILE;
     } else {
         fprintf(stderr, "bad namemap default value built into sshfs; "
-                        "assuming none (bad logic in configure script?)\n");
-        sshfs.namemap = NAMEMAP_NONE;
+                        "assuming user (bad logic in configure script?)\n");
+        sshfs.namemap = NAMEMAP_USER;
     }
     sshfs.nomap = NOMAP_ERROR;
     ssh_add_arg("ssh");
