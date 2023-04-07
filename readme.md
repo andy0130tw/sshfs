@@ -4,6 +4,10 @@ This is an updated version of *SSHFS*.
 
 It supports *Green End SFTP Server*, with the server patched to support nanosecond timestamps. For ease of maintenance, only the latest version of *SFTP* will be supported.
 
+Compared to the *SFTP* spec, it does not support:
+
+- Custom line endings.
+
 *SSHFS* allows you to mount a remote filesystem using *SFTP*. Most *SSH* servers support and enable this *SFTP* access by default, so *SSHFS* is very simple to use - there's nothing to do on the server-side.
 
 ## How to use
