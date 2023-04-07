@@ -2650,7 +2650,12 @@ static int sshfs_chmod(const char *path, mode_t mode,
     else
         buf_add_buf(&buf, &sf->handle);
 
-    buf_add_uint32(&buf, SSH_FILEXFER_ATTR_PERMISSIONS);
+    buf_add_uint32(&buf, SSH_FILEXFER_ATTR_OWNERGROUP | SSH_FILEXFER_ATTR_PERMISSIONS);
+    buf_add_uint8(&buf, SSH_FILEXFER_TYPE_UNKNOWN);
+    err = buf_add_owner_group(&buf);
+    if (err) {
+        return -EINVAL;
+    }
     buf_add_uint32(&buf, mode);
 
     // Commutes with pending write(), so we can use any connection
