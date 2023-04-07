@@ -3410,8 +3410,13 @@ static int sshfs_truncate(const char *path, off_t size,
     else
         buf_add_path(&buf, path);
 
-    buf_add_uint32(&buf, SSH_FILEXFER_ATTR_SIZE);
+    buf_add_uint32(&buf, SSH_FILEXFER_ATTR_OWNERGROUP | SSH_FILEXFER_ATTR_SIZE);
+    buf_add_uint8(&buf, SSH_FILEXFER_TYPE_UNKNOWN);
     buf_add_uint64(&buf, size);
+    err = buf_add_owner_group(&buf);
+    if (err) {
+        return -EINVAL;
+    }
     err = sftp_request(get_conn(sf, path),
                        sf == NULL ? SSH_FXP_SETSTAT : SSH_FXP_FSETSTAT,
                        &buf, SSH_FXP_STATUS, NULL);
