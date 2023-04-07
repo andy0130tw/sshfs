@@ -2701,6 +2701,7 @@ static int sshfs_chown(const char *path, uid_t uid, gid_t gid,
     else
         buf_add_buf(&buf, &sf->handle);
     buf_add_uint32(&buf, SSH_FILEXFER_ATTR_OWNERGROUP);
+    buf_add_uint8(&buf, SSH_FILEXFER_TYPE_UNKNOWN);
     buf_add_string(&buf, remote_uname);
     buf_add_string(&buf, remote_gname);
 
