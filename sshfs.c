@@ -4420,9 +4420,7 @@ int main(int argc, char *argv[])
         exit(1);
     }
 
-    if (sshfs.namemap == NAMEMAP_USER)
-        sshfs.detect_uid = 1;
-    else if (sshfs.namemap == NAMEMAP_FILE) {
+    if (sshfs.namemap == NAMEMAP_FILE) {
         sshfs.uname_to_id = NULL;
         sshfs.gname_to_id = NULL;
         sshfs.uid_to_name = NULL;
@@ -4436,6 +4434,7 @@ int main(int argc, char *argv[])
         if (sshfs.gname_file)
             load_gid_map();
     }
+    sshfs.detect_uid = 1;
     free(sshfs.uname_file);
     free(sshfs.gname_file);
 
