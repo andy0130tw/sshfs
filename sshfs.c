@@ -2653,7 +2653,6 @@ static int sshfs_chmod(const char *path, mode_t mode,
     buf_add_uint32(&buf, SSH_FILEXFER_ATTR_PERMISSIONS);
     buf_add_uint32(&buf, mode);
 
-    /* FIXME: really needs LSETSTAT extension (debian Bug#640038) */
     // Commutes with pending write(), so we can use any connection
     // if the file is not open.
     err = sftp_request(get_conn(sf, NULL),
@@ -2765,6 +2764,7 @@ static int sshfs_utimens(const char *path, const struct timespec tv[2],
     buf_add_uint64(&buf, mtime.tv_sec);
     buf_add_uint32(&buf, mtime.tv_nsec);
 
+    /* FIXME: really needs LSETSTAT extension (debian Bug#640038) */
     err = sftp_request(get_conn(sf, path),
                        sf == NULL ? SSH_FXP_SETSTAT : SSH_FXP_FSETSTAT,
                        &buf, SSH_FXP_STATUS, NULL);
