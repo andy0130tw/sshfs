@@ -1,14 +1,10 @@
-# This Project is Orphaned
-This project is no longer maintained or developed. *Github* issue tracking and pull requests have therefore been disabled. The mailing list (see below) is still available for use.
-
-If you would like to take over this project, you are welcome to do so. Please fork it and develop the fork for a while. Once there has been 6 months of reasonable activity, please contact <Nikolaus@rath.org> and I'll be happy to give you ownership of this repository or replace with a pointer to the fork.
-
 # SSHFS
 ## About
-*SSHFS* allows you to mount a remote filesystem using *SFTP*. Most *SSH* servers support and enable this *SFTP* access by default, so *SSHFS* is very simple to use - there's nothing to do on the server-side.
+This is an updated version of *SSHFS*.
 
-## Development Status
-*SSHFS* is shipped by all major *Linux* distributions and has been in production use across a wide range of systems for many years. However, at present *SSHFS* does not have any active, regular contributors, and there are a number of known issues (see the bugtracker). The current maintainer continues to apply pull requests and makes regular releases, but unfortunately has no capacity to do any development beyond addressing high-impact issues. When reporting bugs, please understand that unless you are including a pull request or are reporting a critical issue, you will probably not get a response.
+It supports *Green End SFTP Server*, with the server patched to support nanosecond timestamps. For ease of maintenance, only the latest version of *SFTP* will be supported.
+
+*SSHFS* allows you to mount a remote filesystem using *SFTP*. Most *SSH* servers support and enable this *SFTP* access by default, so *SSHFS* is very simple to use - there's nothing to do on the server-side.
 
 ## How to use
 Once *SSHFS* is installed (see next section) running it is very simple:
@@ -28,7 +24,7 @@ On *BSD* and *macOS*, to unmount the filesystem:
     umount mountpoint
 
 ## Installation
-First, download the latest *SSHFS* release from <https://github.com/libfuse/sshfs/releases>. You also need [libfuse](http://github.com/libfuse/libfuse) 3.1.0 or newer (or a similar library that provides a libfuse3 compatible interface for your operating system). Finally, you need the [Glib](https://developer.gnome.org/glib/stable/) library with development headers (which should be available from your operating system's package manager).
+First, download the latest *SSHFS* release. You also need [libfuse](http://github.com/libfuse/libfuse) 3.1.0 or newer (or a similar library that provides a libfuse3 compatible interface for your operating system). Finally, you need the [Glib](https://developer.gnome.org/glib/stable/) library with development headers (which should be available from your operating system's package manager).
 
 To build and install, we recommend to use [Meson](http://mesonbuild.com/) (version 0.38 or newer) and [Ninja](https://ninja-build.org/). After extracting the sshfs tarball, create a (temporary) build directory and run Meson:
 
@@ -45,8 +41,3 @@ To build, test and install *SSHFS*, you then use *Ninja* (running the tests requ
     $ ninja
     $ python3 -m pytest test/    # optional, but recommended
     $ sudo ninja install
-
-## Getting Help
-If you need help, please ask on the <fuse-sshfs@lists.sourceforge.net> mailing list (subscribe at <https://lists.sourceforge.net/lists/listinfo/fuse-sshfs>).
-
-Please report any bugs on the *GitHub* issue tracker at <https://github.com/libfuse/libfuse/issues>.
