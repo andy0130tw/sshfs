@@ -182,7 +182,7 @@
 #define SFTP_EXT_HARDLINK "hardlink@openssh.com"
 #define SFTP_EXT_FSYNC "fsync@openssh.com"
 
-#define PROTO_VERSION 5
+#define PROTO_VERSION 6
 
 #define MY_EOF 1
 
