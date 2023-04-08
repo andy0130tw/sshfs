@@ -104,23 +104,6 @@ Options
    synchronous readdir. This will slow things down, but may be useful
    in some situations.
 
--o workaround=LIST
-   Enable the specified workaround. See the `Caveats` section below
-   for some additional information. Possible values are:
-
-   :rename: Emulate overwriting an existing file by deleting and
-        renaming.
-   :renamexdev: Make rename fail with EXDEV instead of the default EPERM
-        to allow moving files across remote filesystems.
-   :truncate: Work around servers that don't support truncate by
-        coping the whole file, truncating it locally, and sending it
-        back.
-   :fstat: Work around broken servers that don't support *fstat()* by
-           using *stat* instead.
-   :buflimit: Work around OpenSSH "buffer fillup" bug.
-   :createmode: Work around broken servers that produce an error when passing a
-                non-zero mode to create, by always passing a mode of 0.
-
 -o namemap=TYPE
    How to map remote username/groupnames to local values. Possible values are:
 
@@ -243,31 +226,6 @@ If the SSH server supports the *hardlinks* extension, SSHFS will allow
 you to create hardlinks. However, hardlinks will always appear as
 individual files when seen through an SSHFS mount, i.e. they will
 appear to have different inodes and an *st_nlink* value of 1.
-
-
-Rename
-~~~~~~
-
-Some SSH servers do not support atomically overwriting the destination
-when renaming a file. In this case you will get an error when you
-attempt to rename a file and the destination already exists. A
-workaround is to first remove the destination file, and then do the
-rename. SSHFS can do this automatically if you call it with `-o
-workaround=rename`. However, in this case it is still possible that
-someone (or something) recreates the destination file after SSHFS has
-removed it, but before SSHFS had the time to rename the old file. In
-this case, the rename will still fail.
-
-
-Permission denied when moving files across remote filesystems
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-Most SFTP servers return only a generic "failure" when failing to rename
-across filesystem boundaries (EXDEV).  sshfs normally converts this generic
-failure to a permission denied error (EPERM).  If the option ``-o
-workaround=renamexdev`` is given, generic failures will be considered EXDEV
-errors which will make programs like `mv(1)` attempt to actually move the
-file after the failed rename.
 
 
 SSHFS hangs for no apparent reason
