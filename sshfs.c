@@ -980,7 +980,10 @@ static int buf_get_attrs(struct buffer *buf, struct stat *stbuf, int *flagsp,
     }
     if ((flags & SSH_FILEXFER_ATTR_BITS)) {
         uint32_t attrib_bits;
+        uint32_t attrib_bits_valid;
         if (buf_get_uint32(buf, &attrib_bits) == -1)
+            return -EIO;
+        if (buf_get_uint32(buf, &attrib_bits_valid) == -1)
             return -EIO;
     }
     if ((flags & SSH_FILEXFER_ATTR_TEXT_HINT)) {
