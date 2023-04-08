@@ -382,6 +382,8 @@ struct sshfs {
     char *mountpoint;
     char *uname_file;
     char *gname_file;
+    uint32_t nobody_uid;
+    uint32_t nobody_gid;
     GHashTable *uname_to_id; // Map remote uname to local UID
     GHashTable *gname_to_id; // Map remote gname to local GID
     GHashTable *uid_to_name; // Map local UID to remote uname
@@ -1018,7 +1020,7 @@ static int buf_get_attrs(struct buffer *buf, struct stat *stbuf, int *flagsp,
         }
     }
 
-    unsigned uid, gid;
+    unsigned uid = sshfs.nobody_uid, gid = sshfs.nobody_gid;
     if (sshfs.remote_uname_detected) {
         if (strcmp(remote_uname, sshfs.remote_uname) == 0)
             uid = sshfs.local_uid;
@@ -4203,6 +4205,15 @@ int main(int argc, char *argv[])
         fprintf(stderr, "see `%s -h' for usage\n", argv[0]);
         exit(1);
     }
+
+    struct passwd *pw = getpwnam("nobody");
+    if (pw == NULL) {
+        fprintf(stderr, "Failed to look up user '%s': %s\n",
+                "nobody", strerror(errno));
+        exit(1);
+    }
+    sshfs.nobody_uid = pw->pw_uid;
+    sshfs.nobody_gid = pw->pw_gid;
 
     if (sshfs.namemap == NAMEMAP_FILE) {
         sshfs.uname_to_id = NULL;
