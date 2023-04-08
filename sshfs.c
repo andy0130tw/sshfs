@@ -116,36 +116,67 @@
     SSH_FILEXFER_ATTR_LINK_COUNT \
 )
 
-#define SSH_FILEXFER_TYPE_REGULAR            1
-#define SSH_FILEXFER_TYPE_DIRECTORY          2
-#define SSH_FILEXFER_TYPE_SYMLINK            3
-#define SSH_FILEXFER_TYPE_SPECIAL            4
-#define SSH_FILEXFER_TYPE_UNKNOWN            5
-#define SSH_FILEXFER_TYPE_SOCKET             6
-#define SSH_FILEXFER_TYPE_CHAR_DEVICE        7
-#define SSH_FILEXFER_TYPE_BLOCK_DEVICE       8
-#define SSH_FILEXFER_TYPE_FIFO               9
+#define ACE4_READ_DATA                      0x00000001
+#define ACE4_LIST_DIRECTORY                 0x00000001
+#define ACE4_WRITE_DATA                     0x00000002
+#define ACE4_ADD_FILE                       0x00000002
+#define ACE4_APPEND_DATA                    0x00000004
+#define ACE4_ADD_SUBDIRECTORY               0x00000004
+#define ACE4_READ_NAMED_ATTRS               0x00000008
+#define ACE4_WRITE_NAMED_ATTRS              0x00000010
+#define ACE4_EXECUTE                        0x00000020
+#define ACE4_DELETE_CHILD                   0x00000040
+#define ACE4_READ_ATTRIBUTES                0x00000080
+#define ACE4_WRITE_ATTRIBUTES               0x00000100
+#define ACE4_DELETE                         0x00010000
+#define ACE4_READ_ACL                       0x00020000
+#define ACE4_WRITE_ACL                      0x00040000
+#define ACE4_WRITE_OWNER                    0x00080000
+#define ACE4_SYNCHRONIZE                    0x00100000
 
-#define SSH_FX_OK                            0
-#define SSH_FX_EOF                           1
-#define SSH_FX_NO_SUCH_FILE                  2
-#define SSH_FX_PERMISSION_DENIED             3
-#define SSH_FX_FAILURE                       4
-#define SSH_FX_BAD_MESSAGE                   5
-#define SSH_FX_NO_CONNECTION                 6
-#define SSH_FX_CONNECTION_LOST               7
-#define SSH_FX_OP_UNSUPPORTED                8
+#define SSH_FILEXFER_TYPE_REGULAR           1
+#define SSH_FILEXFER_TYPE_DIRECTORY         2
+#define SSH_FILEXFER_TYPE_SYMLINK           3
+#define SSH_FILEXFER_TYPE_SPECIAL           4
+#define SSH_FILEXFER_TYPE_UNKNOWN           5
+#define SSH_FILEXFER_TYPE_SOCKET            6
+#define SSH_FILEXFER_TYPE_CHAR_DEVICE       7
+#define SSH_FILEXFER_TYPE_BLOCK_DEVICE      8
+#define SSH_FILEXFER_TYPE_FIFO              9
 
-#define SSH_FXF_RENAME_OVERWRITE    0x00000001
-#define SSH_FXF_RENAME_ATOMIC       0x00000002
-#define SSH_FXF_RENAME_NATIVE       0x00000004
+#define SSH_FX_OK                           0
+#define SSH_FX_EOF                          1
+#define SSH_FX_NO_SUCH_FILE                 2
+#define SSH_FX_PERMISSION_DENIED            3
+#define SSH_FX_FAILURE                      4
+#define SSH_FX_BAD_MESSAGE                  5
+#define SSH_FX_NO_CONNECTION                6
+#define SSH_FX_CONNECTION_LOST              7
+#define SSH_FX_OP_UNSUPPORTED               8
 
-#define SSH_FXF_READ            0x00000001
-#define SSH_FXF_WRITE           0x00000002
-#define SSH_FXF_APPEND          0x00000004
-#define SSH_FXF_CREAT           0x00000008
-#define SSH_FXF_TRUNC           0x00000010
-#define SSH_FXF_EXCL            0x00000020
+#define SSH_FXF_RENAME_OVERWRITE            0x00000001
+#define SSH_FXF_RENAME_ATOMIC               0x00000002
+#define SSH_FXF_RENAME_NATIVE               0x00000004
+
+#define SSH_FXF_ACCESS_DISPOSITION          0x00000007
+#define SSH_FXF_CREATE_NEW                  0x00000000
+#define SSH_FXF_CREATE_TRUNCATE             0x00000001
+#define SSH_FXF_OPEN_EXISTING               0x00000002
+#define SSH_FXF_OPEN_OR_CREATE              0x00000003
+#define SSH_FXF_TRUNCATE_EXISTING           0x00000004
+#define SSH_FXF_APPEND_DATA                 0x00000008
+#define SSH_FXF_APPEND_DATA_ATOMIC          0x00000010
+#define SSH_FXF_TEXT_MODE                   0x00000020
+#define SSH_FXF_BLOCK_READ                  0x00000040
+#define SSH_FXF_BLOCK_WRITE                 0x00000080
+#define SSH_FXF_BLOCK_DELETE                0x00000100
+#define SSH_FXF_BLOCK_ADVISORY              0x00000200
+#define SSH_FXF_NOFOLLOW                    0x00000400
+#define SSH_FXF_DELETE_ON_CLOSE             0x00000800
+#define SSH_FXF_ACCESS_AUDIT_ALARM_INFO     0x00001000
+#define SSH_FXF_ACCESS_BACKUP               0x00002000
+#define SSH_FXF_BACKUP_STREAM               0x00004000
+#define SSH_FXF_OVERRIDE_OWNER              0x00008000
 
 #define SFTP_EXT_STATVFS "statvfs@openssh.com"
 #define SFTP_EXT_HARDLINK "hardlink@openssh.com"
@@ -2504,6 +2535,7 @@ static int sshfs_mknod(const char *path, mode_t mode, dev_t rdev)
     struct buffer buf;
     struct buffer handle;
     (void) rdev;
+    int desired_access = 0;
 
     if ((mode & S_IFMT) != S_IFREG)
         return -EPERM;
@@ -2513,7 +2545,8 @@ static int sshfs_mknod(const char *path, mode_t mode, dev_t rdev)
 
     buf_init(&buf, 0);
     buf_add_path(&buf, path);
-    buf_add_uint32(&buf, SSH_FXF_WRITE | SSH_FXF_CREAT | SSH_FXF_EXCL);
+    buf_add_uint32(&buf, desired_access);
+    buf_add_uint32(&buf, SSH_FXF_CREATE_NEW);
     buf_add_uint32(&buf, SSH_FILEXFER_ATTR_PERMISSIONS);
     buf_add_uint32(&buf, mode);
     err = sftp_request(conn, SSH_FXP_OPEN, &buf, SSH_FXP_HANDLE, &handle);
@@ -2805,6 +2838,7 @@ static int sshfs_open_common(const char *path, mode_t mode,
     struct sshfs_file *sf;
     struct request *open_req;
     struct conntab_entry *ce;
+    uint32_t desired_access = 0;
     uint32_t pflags = 0;
     struct iovec iov;
     uint8_t type;
@@ -2817,25 +2851,30 @@ static int sshfs_open_common(const char *path, mode_t mode,
         fi->direct_io = 1;
 
     if ((fi->flags & O_ACCMODE) == O_RDONLY)
-        pflags = SSH_FXF_READ;
+        desired_access = ACE4_READ_DATA;
     else if((fi->flags & O_ACCMODE) == O_WRONLY)
-        pflags = SSH_FXF_WRITE;
+        desired_access = ACE4_WRITE_DATA;
     else if ((fi->flags & O_ACCMODE) == O_RDWR)
-        pflags = SSH_FXF_READ | SSH_FXF_WRITE;
+        desired_access = ACE4_READ_DATA | ACE4_WRITE_DATA;
     else
         return -EINVAL;
 
-    if (fi->flags & O_CREAT)
-        pflags |= SSH_FXF_CREAT;
+    if (fi->flags & O_CREAT) {
+        if (fi->flags & O_TRUNC)
+            pflags |= SSH_FXF_CREATE_TRUNCATE;
+        else
+            pflags |= SSH_FXF_OPEN_OR_CREATE;
+    } else {
+        if (fi->flags & O_TRUNC)
+            pflags |= SSH_FXF_TRUNCATE_EXISTING;
+        else
+            pflags |= SSH_FXF_OPEN_EXISTING;
+    }
 
-    if (fi->flags & O_EXCL)
-        pflags |= SSH_FXF_EXCL;
-
-    if (fi->flags & O_TRUNC)
-        pflags |= SSH_FXF_TRUNC;
+    // Ignore `fi->flags & O_EXCL`, as *Green End SFTP Server* doesn't support blocking
 
     if (fi->flags & O_APPEND)
-        pflags |= SSH_FXF_APPEND;
+        pflags |= SSH_FXF_APPEND_DATA;
 
     sf = g_new0(struct sshfs_file, 1);
     list_init(&sf->write_reqs);
@@ -2865,6 +2904,7 @@ static int sshfs_open_common(const char *path, mode_t mode,
     pthread_mutex_unlock(&sshfs.lock);
     buf_init(&buf, 0);
     buf_add_path(&buf, path);
+    buf_add_uint32(&buf, desired_access);
     buf_add_uint32(&buf, pflags);
 
     buf_add_uint32(&buf, SSH_FILEXFER_ATTR_OWNERGROUP | SSH_FILEXFER_ATTR_PERMISSIONS);
