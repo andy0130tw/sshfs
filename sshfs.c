@@ -138,6 +138,10 @@
 #define SSH_FX_CONNECTION_LOST               7
 #define SSH_FX_OP_UNSUPPORTED                8
 
+#define SSH_FXF_RENAME_OVERWRITE    0x00000001
+#define SSH_FXF_RENAME_ATOMIC       0x00000002
+#define SSH_FXF_RENAME_NATIVE       0x00000004
+
 #define SSH_FXF_READ            0x00000001
 #define SSH_FXF_WRITE           0x00000002
 #define SSH_FXF_APPEND          0x00000004
@@ -145,7 +149,6 @@
 #define SSH_FXF_TRUNC           0x00000010
 #define SSH_FXF_EXCL            0x00000020
 
-#define SFTP_EXT_POSIX_RENAME "posix-rename@openssh.com"
 #define SFTP_EXT_STATVFS "statvfs@openssh.com"
 #define SFTP_EXT_HARDLINK "hardlink@openssh.com"
 #define SFTP_EXT_FSYNC "fsync@openssh.com"
@@ -400,7 +403,6 @@ struct sshfs {
     pthread_cond_t outstanding_cond;
     int password_stdin;
     char *password;
-    int ext_posix_rename;
     int ext_statvfs;
     int ext_hardlink;
     int ext_fsync;
@@ -1765,11 +1767,6 @@ static int sftp_init_reply_ok(struct conn *conn, struct buffer *buf,
 
             DEBUG("Extension: %s <%s>\n", ext, extdata);
 
-            if (strcmp(ext, SFTP_EXT_POSIX_RENAME) == 0 &&
-                strcmp(extdata, "1") == 0) {
-                sshfs.ext_posix_rename = 1;
-                sshfs.rename_workaround = 0;
-            }
             if (strcmp(ext, SFTP_EXT_STATVFS) == 0 &&
                 strcmp(extdata, "2") == 0)
                 sshfs.ext_statvfs = 1;
@@ -2612,29 +2609,23 @@ static int sshfs_rmdir(const char *path)
     return err;
 }
 
-static int sshfs_do_rename(const char *from, const char *to)
+static int sshfs_do_rename(const char *from, const char *to, unsigned int flags)
 {
     int err;
     struct buffer buf;
+    uint32_t pflags = 0;
+
+    if (flags == RENAME_EXCHANGE) {
+        pflags = SSH_FXF_RENAME_OVERWRITE;
+    }
+
     buf_init(&buf, 0);
     buf_add_path(&buf, from);
     buf_add_path(&buf, to);
+    buf_add_uint32(&buf, pflags);
+
     // Commutes with pending write(), so we can use any connection
     err = sftp_request(get_conn(NULL, NULL), SSH_FXP_RENAME, &buf, SSH_FXP_STATUS, NULL);
-    buf_free(&buf);
-    return err;
-}
-
-static int sshfs_ext_posix_rename(const char *from, const char *to)
-{
-    int err;
-    struct buffer buf;
-    buf_init(&buf, 0);
-    buf_add_string(&buf, SFTP_EXT_POSIX_RENAME);
-    buf_add_path(&buf, from);
-    buf_add_path(&buf, to);
-    // Commutes with pending write(), so we can use any connection
-    err = sftp_request(get_conn(NULL, NULL), SSH_FXP_EXTENDED, &buf, SSH_FXP_STATUS, NULL);
     buf_free(&buf);
     return err;
 }
@@ -2655,10 +2646,7 @@ static int sshfs_rename(const char *from, const char *to, unsigned int flags)
     if(flags != 0)
         return -EINVAL;
 
-    if (sshfs.ext_posix_rename)
-        err = sshfs_ext_posix_rename(from, to);
-    else
-        err = sshfs_do_rename(from, to);
+    err = sshfs_do_rename(from, to, flags);
     if (err == -EPERM && sshfs.rename_workaround) {
         size_t tolen = strlen(to);
         if (tolen + RENAME_TEMP_CHARS < PATH_MAX) {
@@ -2666,13 +2654,13 @@ static int sshfs_rename(const char *from, const char *to, unsigned int flags)
             char totmp[PATH_MAX];
             strcpy(totmp, to);
             random_string(totmp + tolen, RENAME_TEMP_CHARS);
-            tmperr = sshfs_do_rename(to, totmp);
+            tmperr = sshfs_do_rename(to, totmp, flags);
             if (!tmperr) {
-                err = sshfs_do_rename(from, to);
+                err = sshfs_do_rename(from, to, flags);
                 if (!err)
                     err = sshfs_unlink(totmp);
                 else
-                    sshfs_do_rename(totmp, to);
+                    sshfs_do_rename(totmp, to, flags);
             }
         }
     }
