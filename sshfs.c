@@ -80,6 +80,7 @@
 #define SSH_FXP_RENAME             18
 #define SSH_FXP_READLINK           19
 #define SSH_FXP_SYMLINK            20
+#define SSH_FXP_LINK               21
 #define SSH_FXP_STATUS            101
 #define SSH_FXP_HANDLE            102
 #define SSH_FXP_DATA              103
@@ -178,8 +179,11 @@
 #define SSH_FXF_BACKUP_STREAM               0x00004000
 #define SSH_FXF_OVERRIDE_OWNER              0x00008000
 
+#define SSH_FXP_REALPATH_NO_CHECK           0x00000001
+#define SSH_FXP_REALPATH_STAT_IF            0x00000002
+#define SSH_FXP_REALPATH_STAT_ALWAYS        0x00000003
+
 #define SFTP_EXT_STATVFS "statvfs@openssh.com"
-#define SFTP_EXT_HARDLINK "hardlink@openssh.com"
 #define SFTP_EXT_FSYNC "fsync@openssh.com"
 
 #define PROTO_VERSION 6
@@ -426,7 +430,6 @@ struct sshfs {
     int password_stdin;
     char *password;
     int ext_statvfs;
-    int ext_hardlink;
     int ext_fsync;
     struct fuse_operations *op;
 
@@ -617,6 +620,7 @@ static const char *type_name(uint8_t type)
     case SSH_FXP_STAT:           return "STAT";
     case SSH_FXP_RENAME:         return "RENAME";
     case SSH_FXP_READLINK:       return "READLINK";
+    case SSH_FXP_LINK:           return "LINK";
     case SSH_FXP_SYMLINK:        return "SYMLINK";
     case SSH_FXP_STATUS:         return "STATUS";
     case SSH_FXP_HANDLE:         return "HANDLE";
@@ -1774,9 +1778,6 @@ static int sftp_init_reply_ok(struct conn *conn, struct buffer *buf,
             if (strcmp(ext, SFTP_EXT_STATVFS) == 0 &&
                 strcmp(extdata, "2") == 0)
                 sshfs.ext_statvfs = 1;
-            if (strcmp(ext, SFTP_EXT_HARDLINK) == 0 &&
-                strcmp(extdata, "1") == 0)
-                sshfs.ext_hardlink = 1;
             if (strcmp(ext, SFTP_EXT_FSYNC) == 0 &&
                 strcmp(extdata, "1") == 0)
                 sshfs.ext_fsync = 1;
@@ -2298,9 +2299,6 @@ static int sshfs_readlink(const char *path, char *linkbuf, size_t size)
 
     assert(size > 0);
 
-    if (sshfs.server_version < 3)
-        return -EPERM;
-
     buf_init(&buf, 0);
     buf_add_path(&buf, path);
     // Commutes with pending write(), so we can use any connection
@@ -2567,20 +2565,66 @@ static int sshfs_mknod(const char *path, mode_t mode, dev_t rdev)
     return err;
 }
 
-static int sshfs_symlink(const char *from, const char *to)
-{
+static int sshfs_realpath(const char *path, char *compose_path, char *realpathbuf, size_t size, uint8_t control_byte) {
     int err;
     struct buffer buf;
+    struct buffer name;
 
-    if (sshfs.server_version < 3)
-        return -EPERM;
+    assert(size > 0);
+
+    buf_init(&buf, 0);
+    buf_add_path(&buf, path);
+    buf_add_uint8(&buf, control_byte);
+    if (compose_path != NULL) {
+        buf_add_path(&buf, compose_path);
+    }
+    // Commutes with pending write(), so we can use any connection
+    err = sftp_request(get_conn(NULL, NULL), SSH_FXP_REALPATH, &buf, SSH_FXP_NAME, &name);
+    if (!err) {
+        uint32_t count;
+        char *link;
+        err = -EIO;
+        if(buf_get_uint32(&name, &count) != -1 && count == 1 &&
+           buf_get_string(&name, &link) != -1) {
+            strncpy(realpathbuf, link, size - 1);
+            realpathbuf[size - 1] = '\0';
+            free(link);
+            err = 0;
+        }
+        buf_free(&name);
+    }
+    buf_free(&buf);
+    return err;
+}
+
+static int sshfs_create_link_common(const char *from, const char *to, int is_symlink) {
+    int err;
+    struct buffer buf;
+    char hard_link_path[PATH_MAX];
 
     buf_init(&buf, 0);
     buf_add_path(&buf, to);
-    buf_add_string(&buf, from);
+    if (is_symlink) {
+        buf_add_string(&buf, from);
+    } else {
+        // Hard links require an absolute path on the server
+        err = sshfs_realpath(from, NULL, hard_link_path, sizeof hard_link_path, SSH_FXP_REALPATH_NO_CHECK);
+        if (err) {
+            return -EINVAL;
+        }
+        buf_add_string(&buf, hard_link_path);
+    }
+
+    buf_add_uint8(&buf, is_symlink);
     // Commutes with pending write(), so we can use any connection
-    err = sftp_request(get_conn(NULL, NULL), SSH_FXP_SYMLINK, &buf, SSH_FXP_STATUS, NULL);
+    err = sftp_request(get_conn(NULL, NULL), SSH_FXP_LINK, &buf, SSH_FXP_STATUS, NULL);
     buf_free(&buf);
+    return err;
+}
+
+static int sshfs_symlink(const char *from, const char *to)
+{
+    int err = sshfs_create_link_common(from, to, 1);
     return err;
 }
 
@@ -2654,20 +2698,9 @@ static int sshfs_rename(const char *from, const char *to, unsigned int flags)
 static int sshfs_link(const char *from, const char *to)
 {
     int err = -ENOSYS;
-
-    if (sshfs.ext_hardlink && !sshfs.disable_hardlink) {
-        struct buffer buf;
-
-        buf_init(&buf, 0);
-        buf_add_string(&buf, SFTP_EXT_HARDLINK);
-        buf_add_path(&buf, from);
-        buf_add_path(&buf, to);
-        // Commutes with pending write(), so we can use any connection
-        err = sftp_request(get_conn(NULL, NULL), SSH_FXP_EXTENDED, &buf, SSH_FXP_STATUS,
-                           NULL);
-        buf_free(&buf);
+    if (!sshfs.disable_hardlink) {
+        err = sshfs_create_link_common(from, to, 0);
     }
-
     return err;
 }
 
