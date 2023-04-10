@@ -1,0 +1,43 @@
+output-format: text
+
+strictness: veryhigh
+test-warnings: true
+doc-warnings: false
+member-warnings: true
+
+uses:
+
+pycodestyle:
+  full: true
+  disable:
+    - D100
+    - D101
+    - D102
+    - D103
+    - D105
+    - D205
+    - D400
+    - N802 # function name should be lowercase, breaks on tests
+  options:
+    max-line-length: 120
+
+pyflakes:
+  disable:
+    - F999
+
+pylint:
+  disable:
+    - invalid-name
+    - no-member
+    - no-self-use
+    - too-few-public-methods
+    - too-many-ancestors
+  options:
+    max-line-length: 120
+
+dodgy:
+  run: true
+
+ignore-paths:
+
+ignore-patterns:
