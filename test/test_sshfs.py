@@ -124,9 +124,7 @@ def test_sshfs(tmpdir, debug, cache_timeout, sync_rd, multiconn, capfd):  # noqa
             if os.getuid() == 0:
                 tst_chown(mnt_dir)
 
-            # SSHFS only supports one second resolution when setting
-            # file timestamps.
-            tst_utimens(mnt_dir, tol=1)
+            tst_utimens(mnt_dir)
             tst_utimens_now(mnt_dir)
 
             tst_link(mnt_dir, cache_timeout)
@@ -333,7 +331,7 @@ def tst_link(mnt_dir, cache_timeout):
 
     fstat1 = os.lstat(name1)
     fstat2 = os.lstat(name2)
-    for attr in ('st_mode', 'st_dev', 'st_uid', 'st_gid', 'st_size', 'st_atime', 'st_mtime', 'st_ctime'):
+    for attr in ('st_mode', 'st_dev', 'st_uid', 'st_gid', 'st_size', 'st_atime_ns', 'st_mtime_ns', 'st_ctime_ns'):
         assert getattr(fstat1, attr) == getattr(fstat2, attr)
     assert os.path.basename(name2) in os.listdir(mnt_dir)
     assert filecmp.cmp(name1, name2, False)
@@ -422,27 +420,19 @@ def tst_truncate_fd(mnt_dir):
         assert fh_.read(size) == TEST_DATA[: size - 1024]
 
 
-def tst_utimens(mnt_dir, tol=0):
+def tst_utimens(mnt_dir):
     filename = pjoin(mnt_dir, name_generator())
     os.mkdir(filename)
     fstat = os.lstat(filename)
 
-    atime = fstat.st_atime + 42.28
-    mtime = fstat.st_mtime - 42.23
-    if sys.version_info < (3, 3):
-        os.utime(filename, (atime, mtime))
-    else:
-        atime_ns = fstat.st_atime_ns + int(42.28 * 1e9)
-        mtime_ns = fstat.st_mtime_ns - int(42.23 * 1e9)
-        os.utime(filename, None, ns=(atime_ns, mtime_ns))
+    atime_ns = fstat.st_atime_ns + 42
+    mtime_ns = fstat.st_mtime_ns - 42
+    os.utime(filename, None, ns=(atime_ns, mtime_ns))
 
     fstat = os.lstat(filename)
 
-    assert abs(fstat.st_atime - atime) < tol
-    assert abs(fstat.st_mtime - mtime) < tol
-    if sys.version_info >= (3, 3):
-        assert abs(fstat.st_atime_ns - atime_ns) < tol * 1e9
-        assert abs(fstat.st_mtime_ns - mtime_ns) < tol * 1e9
+    assert fstat.st_atime_ns == atime_ns
+    assert fstat.st_mtime_ns == mtime_ns
 
 
 def tst_utimens_now(mnt_dir):
@@ -454,8 +444,8 @@ def tst_utimens_now(mnt_dir):
 
     fstat = os.lstat(fullname)
     # We should get now-timestamps
-    assert fstat.st_atime != 0
-    assert fstat.st_mtime != 0
+    assert fstat.st_atime_ns != 0
+    assert fstat.st_mtime_ns != 0
 
 
 def tst_passthrough(src_dir, mnt_dir, cache_timeout):
