@@ -194,8 +194,6 @@
 
 #define RENAME_TEMP_CHARS 8
 
-#define SFTP_SERVER_PATH "/usr/lib/sftp-server"
-
 /* Asynchronous readdir parameters */
 #define READDIR_START 2
 #define READDIR_MAX 32
@@ -535,8 +533,6 @@ static struct fuse_opt sshfs_opts[] = {
     SSHFS_OPT("sftp_server=%s",    sftp_server, 0),
     SSHFS_OPT("max_read=%u",       max_read, 0),
     SSHFS_OPT("max_write=%u",      max_write, 0),
-    SSHFS_OPT("ssh_protocol=%u",   ssh_ver, 0),
-    SSHFS_OPT("-1",                ssh_ver, 1),
     SSHFS_OPT("namemap=user",      namemap, NAMEMAP_USER),
     SSHFS_OPT("namemap=file",      namemap, NAMEMAP_FILE),
     SSHFS_OPT("unamefile=%s",      uname_file, 0),
@@ -3660,7 +3656,6 @@ static void usage(const char *progname)
 "    -p PORT                equivalent to '-o port=PORT'\n"
 "    -C                     equivalent to '-o compression=yes'\n"
 "    -F ssh_configfile      specifies alternative ssh configuration file\n"
-"    -1                     equivalent to '-o ssh_protocol=1'\n"
 "    -o opt,[opt...]        mount options\n"
 "    -o reconnect           reconnect to server\n"
 "    -o delay_connect       delay connection to server\n"
@@ -3691,8 +3686,7 @@ static void usage(const char *progname)
 "             ignore           don't do any re-mapping\n"
 "             error            return an error (default)\n"
 "    -o ssh_command=CMD     execute CMD instead of 'ssh'\n"
-"    -o ssh_protocol=N      ssh protocol to use (default: 2)\n"
-"    -o sftp_server=SERV    path to sftp server or subsystem (default: sftp)\n"
+"    -o sftp_server=SERV    path to sftp server or subsystem (default: /usr/lib/gesftpserver)\n"
 "    -o directport=PORT     directly connect to PORT bypassing ssh\n"
 "    -o passive             communicate over stdin and stdout bypassing network\n"
 "    -o disable_hardlink    link(2) will return with errno set to ENOSYS\n"
@@ -4325,10 +4319,8 @@ int main(int argc, char *argv[])
     ssh_add_arg(sshfs.host);
     if (sshfs.sftp_server)
         sftp_server = sshfs.sftp_server;
-    else if (sshfs.ssh_ver == 1)
-        sftp_server = SFTP_SERVER_PATH;
     else
-        sftp_server = "sftp";
+        sftp_server = "/usr/lib/gesftpserver";
 
     if (sshfs.ssh_ver != 1 && strchr(sftp_server, '/') == NULL)
         ssh_add_arg("-s");

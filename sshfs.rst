@@ -80,9 +80,6 @@ Options
 -F ssh_configfile
    specifies alternative ssh configuration file
 
--1
-   equivalent to '-o ssh_protocol=1'
-
 -o reconnect
    automatically reconnect to server if connection is
    interrupted. Attempts to access files that were opened before the
@@ -130,11 +127,8 @@ Options
 -o ssh_command=CMD
    execute CMD instead of 'ssh'
 
--o ssh_protocol=N
-   ssh protocol to use (default: 2)
-
 -o sftp_server=SERV
-   path to sftp server or subsystem (default: sftp)
+   path to sftp server or subsystem (default: /usr/lib/gesftpserver)
 
 -o directport=PORT
    directly connect to PORT bypassing ssh
@@ -142,7 +136,7 @@ Options
 -o passive
    communicate over stdin and stdout bypassing network. Useful for
    mounting local filesystem on the remote side.  An example using
-   dpipe command would be ``dpipe /usr/lib/openssh/sftp-server = ssh
+   dpipe command would be ``dpipe /usr/lib/openssh/gesftpserver = ssh
    RemoteHostname sshfs :/directory/to/be/shared ~/mnt/src -o passive``
 
 -o disable_hardlink
