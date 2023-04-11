@@ -2,7 +2,7 @@
 ## About
 This is an updated version of *SSHFS*.
 
-It supports *Green End SFTP Server*, with the server patched to support nanosecond timestamps. For ease of maintenance, only the latest version of *SFTP*, v6, will be supported.
+It supports *Green End SFTP Server*. For ease of maintenance, only the latest version of *SFTP*, v6, will be supported.
 
 Compared to the *SFTP* spec, it does not support:
 
