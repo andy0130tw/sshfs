@@ -1,7 +1,9 @@
-import sys
-import pytest
-import time
 import re
+import sys
+import time
+
+import pytest
+
 
 # If a test fails, wait a moment before retrieving the captured
 # stdout/stderr. When using a server process, this makes sure that we capture
@@ -10,16 +12,18 @@ import re
 # error to FUSE (causing the test to fail), and then logs the exception. Without
 # the extra delay, the exception will go into nowhere.
 @pytest.mark.hookwrapper
-def pytest_pyfunc_call(pyfuncitem):
+def pytest_pyfunc_call(pyfuncitem):  # noqa: unused-argument
     outcome = yield
     failed = outcome.excinfo is not None
     if failed:
         time.sleep(1)
 
+
 @pytest.fixture()
 def pass_capfd(request, capfd):
     '''Provide capfd object to UnitTest instances'''
     request.instance.capfd = capfd
+
 
 def check_test_output(capfd):
     (stdout, stderr) = capfd.readouterr()
@@ -29,25 +33,36 @@ def check_test_output(capfd):
     sys.stderr.write(stderr)
 
     # Strip out false positives
-    for (pattern, flags, count) in capfd.false_positives:
+    for pattern, flags, count in capfd.false_positives:
         cp = re.compile(pattern, flags)
         (stdout, cnt) = cp.subn('', stdout, count=count)
         if count == 0 or count - cnt > 0:
             stderr = cp.sub('', stderr, count=count - cnt)
 
-    patterns = [ r'\b{}\b'.format(x) for x in
-                 ('exception', 'error', 'warning', 'fatal', 'traceback',
-                    'fault', 'crash(?:ed)?', 'abort(?:ed)',
-                    'uninitiali[zs]ed') ]
+    patterns = [
+        rf'\b{x}\b'
+        for x in (
+            'exception',
+            'error',
+            'warning',
+            'fatal',
+            'traceback',
+            'fault',
+            'crash(?:ed)?',
+            'abort(?:ed)',
+            'uninitiali[zs]ed',
+        )
+    ]
     patterns += ['^==[0-9]+== ']
     for pattern in patterns:
         cp = re.compile(pattern, re.IGNORECASE | re.MULTILINE)
         hit = cp.search(stderr)
         if hit:
-            raise AssertionError('Suspicious output to stderr (matched "%s")' % hit.group(0))
+            raise AssertionError(f'Suspicious output to stderr (matched "{hit.group(0)}")')
         hit = cp.search(stdout)
         if hit:
-            raise AssertionError('Suspicious output to stdout (matched "%s")' % hit.group(0))
+            raise AssertionError(f'Suspicious output to stdout (matched "{hit.group(0)}")')
+
 
 def register_output(self, pattern, count=1, flags=re.MULTILINE):
     '''Register *pattern* as false positive for output checking
@@ -58,14 +73,17 @@ def register_output(self, pattern, count=1, flags=re.MULTILINE):
 
     self.false_positives.append((pattern, flags, count))
 
+
 # This is a terrible hack that allows us to access the fixtures from the
 # pytest_runtest_call hook. Among a lot of other hidden assumptions, it probably
 # relies on tests running sequential (i.e., don't dare to use e.g. the xdist
 # plugin)
 current_capfd = None
+
+
 @pytest.yield_fixture(autouse=True)
 def save_cap_fixtures(request, capfd):
-    global current_capfd
+    global current_capfd  # noqa
     capfd.false_positives = []
 
     # Monkeypatch in a function to register false positives
@@ -82,8 +100,9 @@ def save_cap_fixtures(request, capfd):
     assert bak is current_capfd
     current_capfd = None
 
+
 @pytest.hookimpl(trylast=True)
-def pytest_runtest_call(item):
+def pytest_runtest_call(item):  # noqa: unused-argument
     capfd = current_capfd
     if capfd is not None:
         check_test_output(capfd)

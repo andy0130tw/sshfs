@@ -32,8 +32,13 @@ pylint:
     - no-self-use
     - too-few-public-methods
     - too-many-ancestors
+    - too-many-arguments
   options:
     max-line-length: 120
+
+mccabe:
+  disable:
+    - MC0001
 
 dodgy:
   run: true

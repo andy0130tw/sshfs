@@ -36,6 +36,9 @@ sshfs.1
 .deps/
 /build
 
+# Python Library
+/__pypackages__/
+
 # Test directories
 /mnt/
 /scratch/
