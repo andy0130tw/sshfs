@@ -71,7 +71,7 @@ def test_sshfs(tmpdir, debug, cache_timeout, sync_rd, multiconn, capfd):  # noqa
     mnt_dir = str(tmpdir.mkdir('mnt'))
     src_dir = str(tmpdir.mkdir('src'))
 
-    cmdline = base_cmdline + [pjoin(basename, 'sshfs'), '-f', 'localhost:' + src_dir, mnt_dir]
+    cmdline = base_cmdline + [pjoin(basename, 'build', 'sshfs'), '-f', 'localhost:' + src_dir, mnt_dir]
     if debug:
         cmdline += ['-o', 'sshfs_debug']
 
