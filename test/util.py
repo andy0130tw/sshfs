@@ -35,19 +35,12 @@ def cleanup(mount_process, mnt_dir):
 def umount(mount_process, mnt_dir):
     subprocess.check_call(['fusermount3', '-z', '-u', mnt_dir])
     assert not os.path.ismount(mnt_dir)
-
-    # Give mount process a little while to terminate. Popen.wait(timeout)
-    # was only added in 3.3...
-    elapsed = 0
-    while elapsed < 30:
-        code = mount_process.poll()
-        if code is not None:
-            if code == 0:
-                return
+    try:
+        code = mount_process.wait(30)
+        if code != 0:
             pytest.fail(f'file system process terminated with code {code}')
-        time.sleep(0.1)
-        elapsed += 0.1
-    pytest.fail('mount process did not terminate')
+    except subprocess.TimeoutExpired:
+        pytest.fail('mount process did not terminate')
 
 
 def safe_sleep(secs):
