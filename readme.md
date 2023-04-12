@@ -21,7 +21,7 @@ Also many *SSH* options can be specified (see the manual pages for *sftp(1)* and
 
 To unmount the filesystem:
 
-    fusermount -u mountpoint
+    fusermount3 -u mountpoint
 
 On *BSD* and *macOS*, to unmount the filesystem:
 

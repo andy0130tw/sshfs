@@ -247,7 +247,7 @@ to "freeze" when this happens.
 If it is acceptable to discard data being read or written, a quick workaround
 is to kill the responsible ``sshfs`` process, which will make any blocking
 operations on the mounted filesystem error out and thereby "unfreeze" the
-relevant applications. Note that force unmounting with ``fusermount -zu``, on
+relevant applications. Note that force unmounting with ``fusermount3 -zu``, on
 the other hand, does not help in this case and will leave read/write operations
 in the blocking state.
 

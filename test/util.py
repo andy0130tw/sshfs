@@ -24,7 +24,7 @@ def wait_for_mount(mount_process, mnt_dir, test_fn=os.path.ismount):
 
 
 def cleanup(mount_process, mnt_dir):
-    subprocess.call(['fusermount', '-z', '-u', mnt_dir], stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
+    subprocess.call(['fusermount3', '-z', '-u', mnt_dir], stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
     mount_process.terminate()
     try:
         mount_process.wait(1)
@@ -76,11 +76,11 @@ def fuse_test_marker():
     def skip(x):
         pytest.mark.skip(reason=x)
 
-    with subprocess.Popen(['which', 'fusermount'], stdout=subprocess.PIPE, universal_newlines=True) as which:
+    with subprocess.Popen(['which', 'fusermount3'], stdout=subprocess.PIPE, universal_newlines=True) as which:
         fusermount_path = which.communicate()[0].strip()
 
     if not fusermount_path or which.returncode != 0:
-        return skip('Can\'t find fusermount executable')
+        return skip('Can\'t find fusermount3 executable')
 
     if not os.path.exists('/dev/fuse'):
         return skip('FUSE kernel module does not seem to be loaded')
@@ -90,7 +90,7 @@ def fuse_test_marker():
 
     mode = os.stat(fusermount_path).st_mode
     if mode & stat.S_ISUID == 0:
-        return skip('fusermount executable not setuid, and we are not root.')
+        return skip('fusermount3 executable not setuid, and we are not root.')
 
     try:  # noqa: no-else-return
         fd = os.open('/dev/fuse', os.O_RDWR)
