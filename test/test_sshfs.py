@@ -290,7 +290,7 @@ def tst_seek(src_dir, mnt_dir):
 
 
 def tst_open_unlink(mnt_dir):
-    name = pjoin(mnt_dir, name_generator())
+    name = name_generator()
     data1 = b'foo'
     data2 = b'bar'
     fullname = pjoin(mnt_dir, name)
