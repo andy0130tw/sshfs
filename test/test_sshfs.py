@@ -212,8 +212,7 @@ def tst_create(mnt_dir):
     assert exc_info.value.errno == errno.ENOENT
     assert name not in os.listdir(mnt_dir)
 
-    fd = os.open(fullname, os.O_CREAT | os.O_RDWR)
-    os.close(fd)
+    os_create(fullname)
 
     assert name in os.listdir(mnt_dir)
     fstat = os.lstat(fullname)
@@ -438,8 +437,7 @@ def tst_utimens(mnt_dir):
 def tst_utimens_now(mnt_dir):
     fullname = pjoin(mnt_dir, name_generator())
 
-    fd = os.open(fullname, os.O_CREAT | os.O_RDWR)
-    os.close(fd)
+    os_create(fullname)
     os.utime(fullname, None)
 
     fstat = os.lstat(fullname)
