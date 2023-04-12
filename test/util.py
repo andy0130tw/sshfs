@@ -67,7 +67,7 @@ def fuse_test_marker():
     '''
 
     def skip(x):
-        pytest.mark.skip(reason=x)
+        return pytest.mark.skip(reason=x)
 
     with subprocess.Popen(['which', 'fusermount3'], stdout=subprocess.PIPE, universal_newlines=True) as which:
         fusermount_path = which.communicate()[0].strip()
