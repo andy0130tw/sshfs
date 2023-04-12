@@ -2037,7 +2037,7 @@ static int start_processing_thread(struct conn *conn)
 }
 
 static void *sshfs_init(struct fuse_conn_info *conn,
-                        struct fuse_config *cfg)
+                        __attribute__((unused)) struct fuse_config *cfg)
 {
     /* Readahead should be done by kernel or sshfs but not both */
     if (conn->capable & FUSE_CAP_ASYNC_READ)
