@@ -120,6 +120,7 @@ def test_sshfs(  # noqa: too-many-statements
             tst_utimens(mnt_dir)
             tst_utimens_now(mnt_dir)
             tst_statvfs(mnt_dir)
+            tst_chmod(mnt_dir)
 
             tst_create(mnt_dir)
             tst_open_read(src_dir, mnt_dir, test_data_file)
@@ -134,6 +135,7 @@ def test_sshfs(  # noqa: too-many-statements
             tst_readdir(src_dir, mnt_dir, test_data_file)
             tst_rmdir(src_dir, mnt_dir, cache_timeout)
 
+            tst_rename(mnt_dir, cache_timeout)
             tst_link(mnt_dir, test_data_file, cache_timeout)
             tst_symlink(mnt_dir)
             tst_unlink(src_dir, mnt_dir, cache_timeout)
@@ -183,6 +185,15 @@ def tst_statvfs(mnt_dir: Path) -> None:
     os.statvfs(mnt_dir)
 
 
+def tst_chmod(mnt_dir: Path) -> None:
+    mode = 0o600
+    path = mnt_dir / name_generator()
+    os_create(path)
+    path.chmod(mode)
+
+    assert path.lstat().st_mode & 0o777 == mode
+
+
 def tst_create(mnt_dir: Path) -> None:
     name = name_generator()
     path = mnt_dir / name
@@ -198,6 +209,8 @@ def tst_create(mnt_dir: Path) -> None:
     assert stat.S_ISREG(fstat.st_mode)
     assert fstat.st_nlink == 1
     assert fstat.st_size == 0
+    assert fstat.st_uid == os.getuid()
+    assert fstat.st_gid == os.getgid()
 
 
 def tst_open_read(src_dir: Path, mnt_dir: Path, test_data_file: Path) -> None:
@@ -375,6 +388,34 @@ def tst_rmdir(src_dir: Path, mnt_dir: Path, cache_timeout: int) -> None:
     assert not name_in_dir(dirname, src_dir)
 
 
+def tst_rename(mnt_dir: Path, cache_timeout: int) -> None:
+    name1 = name_generator()
+    name2 = name_generator()
+    path1 = mnt_dir / name1
+    path2 = mnt_dir / name2
+
+    data1 = b'foo'
+    with path1.open('wb', buffering=0) as fh_:
+        fh_.write(data1)
+
+    fstat1 = path1.lstat()
+    path1.rename(path2)
+    if cache_timeout:
+        safe_sleep(cache_timeout)
+
+    fstat2 = path2.lstat()
+
+    with path2.open('rb', buffering=0) as fh_:
+        data2 = fh_.read()
+
+    for attr in ('st_mode', 'st_dev', 'st_uid', 'st_gid', 'st_size', 'st_atime_ns', 'st_mtime_ns', 'st_ino'):
+        assert getattr(fstat1, attr) == getattr(fstat2, attr)
+    assert getattr(fstat2, 'st_ctime_ns') >= getattr(fstat1, 'st_ctime_ns')
+
+    assert name_in_dir(path2.name, mnt_dir)
+    assert data1 == data2
+
+
 def tst_link(mnt_dir: Path, test_data_file: Path, cache_timeout: int) -> None:
     path1 = mnt_dir / name_generator()
     path2 = mnt_dir / name_generator()
@@ -395,9 +436,12 @@ def tst_link(mnt_dir: Path, test_data_file: Path, cache_timeout: int) -> None:
         safe_sleep(cache_timeout)
 
     fstat1 = path1.lstat()
+    assert fstat1.st_nlink == 2
+
     fstat2 = path2.lstat()
     for attr in ('st_mode', 'st_dev', 'st_uid', 'st_gid', 'st_size', 'st_atime_ns', 'st_mtime_ns', 'st_ctime_ns'):
         assert getattr(fstat1, attr) == getattr(fstat2, attr)
+
     assert name_in_dir(path2.name, mnt_dir)
     assert filecmp.cmp(path1, path2, False)
 
