@@ -6,26 +6,26 @@ import shutil
 import stat
 import subprocess
 import sys
-from contextlib import contextmanager
-from os.path import join as pjoin
+from pathlib import Path
 from tempfile import NamedTemporaryFile
 
 import pytest
+from conftest import CaptureFixture
 from util import base_cmdline, basename, cleanup, fuse_test_marker, safe_sleep, umount, wait_for_mount
 
 
-TEST_FILE = __file__
+TEST_FILE = Path(__file__)
 
 pytestmark = fuse_test_marker()
 
-with open(TEST_FILE, 'rb') as fh:
+with TEST_FILE.open('rb') as fh:
     TEST_DATA = fh.read()
 
 
 class NameGenerator:
     counter = 0
 
-    def __call__(self):
+    def __call__(self) -> str:
         self.counter += 1
         return f'testfile_{self.counter}'
 
@@ -33,11 +33,22 @@ class NameGenerator:
 name_generator = NameGenerator()
 
 
+def name_in_dir(name: str, path: Path) -> bool:
+    return any(name == cur_path.name for cur_path in path.iterdir())
+
+
 @pytest.mark.parametrize('debug', (False, True))
 @pytest.mark.parametrize('cache_timeout', (0, 1))
 @pytest.mark.parametrize('sync_rd', (True, False))
 @pytest.mark.parametrize('multiconn', (True, False))
-def test_sshfs(tmpdir, debug, cache_timeout, sync_rd, multiconn, capfd):  # noqa: too-many-statements
+def test_sshfs(  # noqa: too-many-statements
+    tmp_path_factory: pytest.TempPathFactory,
+    debug: bool,
+    cache_timeout: int,
+    sync_rd: bool,
+    multiconn: bool,
+    capfd: CaptureFixture,
+) -> None:
     # Avoid false positives from debug messages
     # if debug:
     #     capfd.register_output(r'^   unique: [0-9]+, error: -[0-9]+ .+$', count=0)
@@ -68,10 +79,10 @@ def test_sshfs(tmpdir, debug, cache_timeout, sync_rd, multiconn, capfd):  # noqa
     if res != 0:
         pytest.fail('Unable to ssh into localhost without password prompt.')
 
-    mnt_dir = str(tmpdir.mkdir('mnt'))
-    src_dir = str(tmpdir.mkdir('src'))
+    mnt_dir = tmp_path_factory.mktemp('mnt')
+    src_dir = tmp_path_factory.mktemp('src')
 
-    cmdline = base_cmdline + [pjoin(basename, 'build', 'sshfs'), '-f', 'localhost:' + src_dir, mnt_dir]
+    cmdline = [*base_cmdline, str(basename / 'build/sshfs'), '-f', f'localhost:{src_dir}', str(mnt_dir)]
     if debug:
         cmdline += ['-o', 'sshfs_debug']
 
@@ -138,265 +149,256 @@ def test_sshfs(tmpdir, debug, cache_timeout, sync_rd, multiconn, capfd):  # noqa
             umount(mount_process, mnt_dir)
 
 
-@contextmanager
-def os_open(name, flags):
-    fd = os.open(name, flags)
-    try:
-        yield fd
-    finally:
-        os.close(fd)
+def os_create(path: Path) -> None:
+    with os.fdopen(os.open(path, os.O_CREAT | os.O_RDWR)) as _:
+        pass
 
 
-def os_create(name):
-    os.close(os.open(name, os.O_CREAT | os.O_RDWR))
-
-
-def tst_unlink(src_dir, mnt_dir, cache_timeout):
+def tst_unlink(src_dir: Path, mnt_dir: Path, cache_timeout: int) -> None:
     name = name_generator()
-    fullname = mnt_dir + '/' + name
-    with open(pjoin(src_dir, name), 'wb') as fh_:
+    path = mnt_dir / name
+    with (src_dir / name).open('wb') as fh_:
         fh_.write(b'hello')
     if cache_timeout:
         safe_sleep(cache_timeout + 1)
-    assert name in os.listdir(mnt_dir)
-    os.unlink(fullname)
+    assert name_in_dir(name, mnt_dir)
+    path.unlink()
     with pytest.raises(OSError) as exc_info:
-        os.stat(fullname)
+        path.stat()
     assert exc_info.value.errno == errno.ENOENT
-    assert name not in os.listdir(mnt_dir)
-    assert name not in os.listdir(src_dir)
+    assert not name_in_dir(name, mnt_dir)
+    assert not name_in_dir(name, src_dir)
 
 
-def tst_mkdir(mnt_dir):
+def tst_mkdir(mnt_dir: Path) -> None:
     dirname = name_generator()
-    fullname = mnt_dir + '/' + dirname
-    os.mkdir(fullname)
-    fstat = os.stat(fullname)
+    path = mnt_dir / dirname
+    path.mkdir()
+    fstat = path.stat()
     assert stat.S_ISDIR(fstat.st_mode)
-    assert os.listdir(fullname) == []
+    assert not list(path.iterdir())
     assert fstat.st_nlink in (1, 2)
-    assert dirname in os.listdir(mnt_dir)
+    assert name_in_dir(dirname, mnt_dir)
 
 
-def tst_rmdir(src_dir, mnt_dir, cache_timeout):
-    name = name_generator()
-    fullname = mnt_dir + '/' + name
-    os.mkdir(pjoin(src_dir, name))
+def tst_rmdir(src_dir: Path, mnt_dir: Path, cache_timeout: int) -> None:
+    dirname = name_generator()
+    path = mnt_dir / dirname
+    (src_dir / dirname).mkdir()
     if cache_timeout:
         safe_sleep(cache_timeout + 1)
-    assert name in os.listdir(mnt_dir)
-    os.rmdir(fullname)
+    assert name_in_dir(dirname, mnt_dir)
+    path.rmdir()
     with pytest.raises(OSError) as exc_info:
-        os.stat(fullname)
+        path.stat()
     assert exc_info.value.errno == errno.ENOENT
-    assert name not in os.listdir(mnt_dir)
-    assert name not in os.listdir(src_dir)
+    assert not name_in_dir(dirname, mnt_dir)
+    assert not name_in_dir(dirname, src_dir)
 
 
-def tst_symlink(mnt_dir):
+def tst_symlink(mnt_dir: Path) -> None:
     linkname = name_generator()
-    fullname = mnt_dir + '/' + linkname
-    os.symlink('/imaginary/dest', fullname)
-    fstat = os.lstat(fullname)
+    path = mnt_dir / linkname
+    path.symlink_to('/imaginary/dest')
+    fstat = path.lstat()
     assert stat.S_ISLNK(fstat.st_mode)
-    assert os.readlink(fullname) == '/imaginary/dest'
+    assert str(path.readlink()) == '/imaginary/dest'
     assert fstat.st_nlink == 1
-    assert linkname in os.listdir(mnt_dir)
+    assert name_in_dir(linkname, mnt_dir)
 
 
-def tst_create(mnt_dir):
+def tst_create(mnt_dir: Path) -> None:
     name = name_generator()
-    fullname = pjoin(mnt_dir, name)
+    path = mnt_dir / name
     with pytest.raises(OSError) as exc_info:
-        os.stat(fullname)
+        path.stat()
     assert exc_info.value.errno == errno.ENOENT
-    assert name not in os.listdir(mnt_dir)
+    assert not name_in_dir(name, mnt_dir)
 
-    os_create(fullname)
+    os_create(path)
 
-    assert name in os.listdir(mnt_dir)
-    fstat = os.lstat(fullname)
+    assert name_in_dir(name, mnt_dir)
+    fstat = path.lstat()
     assert stat.S_ISREG(fstat.st_mode)
     assert fstat.st_nlink == 1
     assert fstat.st_size == 0
 
 
-def tst_chown(mnt_dir):
-    filename = pjoin(mnt_dir, name_generator())
-    os.mkdir(filename)
-    fstat = os.lstat(filename)
+def tst_chown(mnt_dir: Path) -> None:
+    path = mnt_dir / name_generator()
+    path.mkdir()
+    fstat = path.lstat()
     uid = fstat.st_uid
     gid = fstat.st_gid
 
     uid_new = uid + 1
-    os.chown(filename, uid_new, -1)
-    fstat = os.lstat(filename)
+    os.chown(path, uid_new, -1)
+    fstat = path.lstat()
     assert fstat.st_uid == uid_new
     assert fstat.st_gid == gid
 
     gid_new = gid + 1
-    os.chown(filename, -1, gid_new)
-    fstat = os.lstat(filename)
+    os.chown(path, -1, gid_new)
+    fstat = path.lstat()
     assert fstat.st_uid == uid_new
     assert fstat.st_gid == gid_new
 
 
-def tst_open_read(src_dir, mnt_dir):
+def tst_open_read(src_dir: Path, mnt_dir: Path) -> None:
     name = name_generator()
-    with open(pjoin(src_dir, name), 'wb') as fh_out, open(TEST_FILE, 'rb') as fh_in:
+    with (src_dir / name).open('wb') as fh_out, TEST_FILE.open('rb') as fh_in:
         shutil.copyfileobj(fh_in, fh_out)
 
-    assert filecmp.cmp(pjoin(mnt_dir, name), TEST_FILE, False)
+    assert filecmp.cmp(mnt_dir / name, TEST_FILE, False)
 
 
-def tst_open_write(src_dir, mnt_dir):
+def tst_open_write(src_dir: Path, mnt_dir: Path) -> None:
     name = name_generator()
-    fd = os.open(pjoin(src_dir, name), os.O_CREAT | os.O_RDWR)
+    fd = os.open(src_dir / name, os.O_CREAT | os.O_RDWR)
     os.close(fd)
-    fullname = pjoin(mnt_dir, name)
-    with open(fullname, 'wb') as fh_out, open(TEST_FILE, 'rb') as fh_in:
+    path = mnt_dir / name
+    with path.open('wb') as fh_out, TEST_FILE.open('rb') as fh_in:
         shutil.copyfileobj(fh_in, fh_out)
 
-    assert filecmp.cmp(fullname, TEST_FILE, False)
+    assert filecmp.cmp(path, TEST_FILE, False)
 
 
-def tst_append(src_dir, mnt_dir):
+def tst_append(src_dir: Path, mnt_dir: Path) -> None:
     name = name_generator()
-    os_create(pjoin(src_dir, name))
-    fullname = pjoin(mnt_dir, name)
-    with os_open(fullname, os.O_WRONLY) as fd:
-        os.write(fd, b'foo\n')
-    with os_open(fullname, os.O_WRONLY | os.O_APPEND) as fd:
-        os.write(fd, b'bar\n')
+    os_create(src_dir / name)
+    path = mnt_dir / name
+    with os.fdopen(os.open(path, os.O_WRONLY), 'wb') as fd:
+        fd.write(b'foo\n')
+    with os.fdopen(os.open(path, os.O_WRONLY | os.O_APPEND), 'ab') as fd:
+        fd.write(b'bar\n')
 
-    with open(fullname, 'rb') as fh_:
+    with path.open('rb') as fh_:
         assert fh_.read() == b'foo\nbar\n'
 
 
-def tst_seek(src_dir, mnt_dir):
+def tst_seek(src_dir: Path, mnt_dir: Path) -> None:
     name = name_generator()
-    os_create(pjoin(src_dir, name))
-    fullname = pjoin(mnt_dir, name)
-    with os_open(fullname, os.O_WRONLY) as fd:
-        os.lseek(fd, 1, os.SEEK_SET)
-        os.write(fd, b'foobar\n')
-    with os_open(fullname, os.O_WRONLY) as fd:
-        os.lseek(fd, 4, os.SEEK_SET)
-        os.write(fd, b'com')
+    os_create(src_dir / name)
+    path = mnt_dir / name
+    with os.fdopen(os.open(path, os.O_WRONLY), 'wb') as fd:
+        fd.seek(1, os.SEEK_SET)
+        fd.write(b'foobar\n')
+    with os.fdopen(os.open(path, os.O_WRONLY), 'wb') as fd:
+        fd.seek(4, os.SEEK_SET)
+        fd.write(b'com')
 
-    with open(fullname, 'rb') as fh_:
+    with path.open('rb') as fh_:
         assert fh_.read() == b'\0foocom\n'
 
 
-def tst_open_unlink(mnt_dir):
+def tst_open_unlink(mnt_dir: Path) -> None:
     name = name_generator()
     data1 = b'foo'
     data2 = b'bar'
-    fullname = pjoin(mnt_dir, name)
-    with open(fullname, 'wb+', buffering=0) as fh_:
+    path = mnt_dir / name
+    with path.open('wb+', buffering=0) as fh_:
         fh_.write(data1)
-        os.unlink(fullname)
+        path.unlink()
         with pytest.raises(OSError) as exc_info:
-            os.stat(fullname)
+            path.stat()
             assert exc_info.value.errno == errno.ENOENT
-        assert name not in os.listdir(mnt_dir)
+        assert not name_in_dir(name, mnt_dir)
         fh_.write(data2)
         fh_.seek(0)
         assert fh_.read() == data1 + data2
 
 
-def tst_statvfs(mnt_dir):
+def tst_statvfs(mnt_dir: Path) -> None:
     os.statvfs(mnt_dir)
 
 
-def tst_link(mnt_dir, cache_timeout):
-    name1 = pjoin(mnt_dir, name_generator())
-    name2 = pjoin(mnt_dir, name_generator())
-    shutil.copyfile(TEST_FILE, name1)
-    assert filecmp.cmp(name1, TEST_FILE, False)
+def tst_link(mnt_dir: Path, cache_timeout: int) -> None:
+    path1 = mnt_dir / name_generator()
+    path2 = mnt_dir / name_generator()
+    shutil.copyfile(TEST_FILE, path1)
+    assert filecmp.cmp(path1, TEST_FILE, False)
 
-    fstat1 = os.lstat(name1)
+    fstat1 = path1.lstat()
     assert fstat1.st_nlink == 1
 
-    os.link(name1, name2)
+    path2.hardlink_to(path1)
 
     # The link operation changes st_ctime, and if we're unlucky
-    # the kernel will keep the old value cached for name1, and
-    # retrieve the new value for name2 (at least, this is the only
+    # the kernel will keep the old value cached for path1, and
+    # retrieve the new value for path2 (at least, this is the only
     # way I can explain the test failure). To avoid this problem,
     # we need to wait until the cached value has expired.
     if cache_timeout:
         safe_sleep(cache_timeout)
 
-    fstat1 = os.lstat(name1)
-    fstat2 = os.lstat(name2)
+    fstat1 = path1.lstat()
+    fstat2 = path2.lstat()
     for attr in ('st_mode', 'st_dev', 'st_uid', 'st_gid', 'st_size', 'st_atime_ns', 'st_mtime_ns', 'st_ctime_ns'):
         assert getattr(fstat1, attr) == getattr(fstat2, attr)
-    assert os.path.basename(name2) in os.listdir(mnt_dir)
-    assert filecmp.cmp(name1, name2, False)
+    assert name_in_dir(path2.name, mnt_dir)
+    assert filecmp.cmp(path1, path2, False)
 
-    os.unlink(name2)
+    path2.unlink()
 
-    assert os.path.basename(name2) not in os.listdir(mnt_dir)
+    assert not name_in_dir(path2.name, mnt_dir)
     with pytest.raises(FileNotFoundError):
-        os.lstat(name2)
+        path2.lstat()
 
-    os.unlink(name1)
+    path1.unlink()
 
 
-def tst_readdir(src_dir, mnt_dir):
+def tst_readdir(src_dir: Path, mnt_dir: Path) -> None:
     newdir = name_generator()
-    src_newdir = pjoin(src_dir, newdir)
-    mnt_newdir = pjoin(mnt_dir, newdir)
-    file_ = src_newdir + '/' + name_generator()
-    subdir = src_newdir + '/' + name_generator()
-    subfile = subdir + '/' + name_generator()
+    src_newdir = src_dir / newdir
+    mnt_newdir = mnt_dir / newdir
+    file_ = src_newdir / name_generator()
+    subdir = src_newdir / name_generator()
+    subfile = subdir / name_generator()
 
-    os.mkdir(src_newdir)
+    src_newdir.mkdir()
     shutil.copyfile(TEST_FILE, file_)
-    os.mkdir(subdir)
+    subdir.mkdir()
     shutil.copyfile(TEST_FILE, subfile)
 
-    listdir_is = os.listdir(mnt_newdir)
-    listdir_is.sort()
-    listdir_should = [os.path.basename(file_), os.path.basename(subdir)]
+    listdir_is = sorted(path.name for path in mnt_newdir.iterdir())
+    listdir_should = [file_.name, subdir.name]
     listdir_should.sort()
     assert listdir_is == listdir_should
 
-    os.unlink(file_)
-    os.unlink(subfile)
-    os.rmdir(subdir)
-    os.rmdir(src_newdir)
+    file_.unlink()
+    subfile.unlink()
+    subdir.rmdir()
+    src_newdir.rmdir()
 
 
-def tst_truncate_path(mnt_dir):
+def tst_truncate_path(mnt_dir: Path) -> None:
     assert len(TEST_DATA) > 1024
 
-    filename = pjoin(mnt_dir, name_generator())
-    with open(filename, 'wb') as fh_:
+    path = mnt_dir / name_generator()
+    with path.open('wb') as fh_:
         fh_.write(TEST_DATA)
 
-    fstat = os.stat(filename)
+    fstat = path.stat()
     size = fstat.st_size
     assert size == len(TEST_DATA)
 
     # Add zeros at the end
-    os.truncate(filename, size + 1024)
-    assert os.stat(filename).st_size == size + 1024
-    with open(filename, 'rb') as fh_:
+    os.truncate(path, size + 1024)
+    assert path.stat().st_size == size + 1024
+    with path.open('rb') as fh_:
         assert fh_.read(size) == TEST_DATA
         assert fh_.read(1025) == b'\0' * 1024
 
     # Truncate data
-    os.truncate(filename, size - 1024)
-    assert os.stat(filename).st_size == size - 1024
-    with open(filename, 'rb') as fh_:
+    os.truncate(path, size - 1024)
+    assert path.stat().st_size == size - 1024
+    with path.open('rb') as fh_:
         assert fh_.read(size) == TEST_DATA[: size - 1024]
 
-    os.unlink(filename)
+    path.unlink()
 
 
-def tst_truncate_fd(mnt_dir):
+def tst_truncate_fd(mnt_dir: Path) -> None:
     assert len(TEST_DATA) > 1024
     with NamedTemporaryFile('w+b', 0, dir=mnt_dir) as fh_:
         fd = fh_.fileno()
@@ -419,59 +421,58 @@ def tst_truncate_fd(mnt_dir):
         assert fh_.read(size) == TEST_DATA[: size - 1024]
 
 
-def tst_utimens(mnt_dir):
-    filename = pjoin(mnt_dir, name_generator())
-    os.mkdir(filename)
-    fstat = os.lstat(filename)
+def tst_utimens(mnt_dir: Path) -> None:
+    path = mnt_dir / name_generator()
+    path.mkdir()
+    fstat = path.lstat()
 
     atime_ns = fstat.st_atime_ns + 42
     mtime_ns = fstat.st_mtime_ns - 42
-    os.utime(filename, None, ns=(atime_ns, mtime_ns))
+    os.utime(path, None, ns=(atime_ns, mtime_ns))
 
-    fstat = os.lstat(filename)
+    fstat = path.lstat()
 
     assert fstat.st_atime_ns == atime_ns
     assert fstat.st_mtime_ns == mtime_ns
 
 
-def tst_utimens_now(mnt_dir):
-    fullname = pjoin(mnt_dir, name_generator())
+def tst_utimens_now(mnt_dir: Path) -> None:
+    path = mnt_dir / name_generator()
+    os_create(path)
+    os.utime(path, None)
 
-    os_create(fullname)
-    os.utime(fullname, None)
-
-    fstat = os.lstat(fullname)
+    fstat = path.lstat()
     # We should get now-timestamps
     assert fstat.st_atime_ns != 0
     assert fstat.st_mtime_ns != 0
 
 
-def tst_passthrough(src_dir, mnt_dir, cache_timeout):
+def tst_passthrough(src_dir: Path, mnt_dir: Path, cache_timeout: int) -> None:
     name = name_generator()
-    src_name = pjoin(src_dir, name)
-    mnt_name = pjoin(src_dir, name)
-    assert name not in os.listdir(src_dir)
-    assert name not in os.listdir(mnt_dir)
-    with open(src_name, 'w', encoding='utf-8') as fh_:
+    src_path = src_dir / name
+    mnt_path = src_dir / name
+    assert not name_in_dir(name, src_dir)
+    assert not name_in_dir(name, mnt_dir)
+    with src_path.open('w', encoding='utf-8') as fh_:
         fh_.write('Hello, world')
-    assert name in os.listdir(src_dir)
+    assert name_in_dir(name, src_dir)
     if cache_timeout:
         safe_sleep(cache_timeout + 1)
-    assert name in os.listdir(mnt_dir)
-    assert os.stat(src_name) == os.stat(mnt_name)
+    assert name_in_dir(name, mnt_dir)
+    assert src_path.stat() == mnt_path.stat()
 
     name = name_generator()
-    src_name = pjoin(src_dir, name)
-    mnt_name = pjoin(src_dir, name)
-    assert name not in os.listdir(src_dir)
-    assert name not in os.listdir(mnt_dir)
-    with open(mnt_name, 'w', encoding='utf-8') as fh_:
+    src_path = src_dir / name
+    mnt_path = src_dir / name
+    assert not name_in_dir(name, src_dir)
+    assert not name_in_dir(name, mnt_dir)
+    with mnt_path.open('w', encoding='utf-8') as fh_:
         fh_.write('Hello, world')
-    assert name in os.listdir(src_dir)
+    assert name_in_dir(name, src_dir)
     if cache_timeout:
         safe_sleep(cache_timeout + 1)
-    assert name in os.listdir(mnt_dir)
-    assert os.stat(src_name) == os.stat(mnt_name)
+    assert name_in_dir(name, mnt_dir)
+    assert src_path.stat() == mnt_path.stat()
 
 
 if __name__ == '__main__':

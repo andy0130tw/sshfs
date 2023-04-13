@@ -3,15 +3,17 @@ import os
 import stat
 import subprocess
 import time
-from os.path import join as pjoin
+from pathlib import Path
 
 import pytest
 
 
-basename = pjoin(os.path.dirname(__file__), '..')
+__all__ = ['base_cmdline', 'basename', 'cleanup', 'fuse_test_marker', 'safe_sleep', 'umount', 'wait_for_mount']
+
+basename = Path(__file__).parent.parent
 
 
-def wait_for_mount(mount_process, mnt_dir, test_fn=os.path.ismount):
+def wait_for_mount(mount_process: subprocess.Popen, mnt_dir: Path, test_fn=os.path.ismount) -> None:
     elapsed = 0
     while elapsed < 30:
         if test_fn(mnt_dir):
@@ -23,8 +25,8 @@ def wait_for_mount(mount_process, mnt_dir, test_fn=os.path.ismount):
     pytest.fail('mountpoint failed to come up')
 
 
-def cleanup(mount_process, mnt_dir):
-    subprocess.call(['fusermount3', '-z', '-u', mnt_dir], stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
+def cleanup(mount_process: subprocess.Popen, mnt_dir: Path) -> None:
+    subprocess.call(['fusermount3', '-z', '-u', str(mnt_dir)], stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
     mount_process.terminate()
     try:
         mount_process.wait(1)
@@ -32,8 +34,8 @@ def cleanup(mount_process, mnt_dir):
         mount_process.kill()
 
 
-def umount(mount_process, mnt_dir):
-    subprocess.check_call(['fusermount3', '-z', '-u', mnt_dir])
+def umount(mount_process: subprocess.Popen, mnt_dir: Path) -> None:
+    subprocess.check_call(['fusermount3', '-z', '-u', str(mnt_dir)])
     assert not os.path.ismount(mnt_dir)
     try:
         code = mount_process.wait(30)
@@ -43,7 +45,7 @@ def umount(mount_process, mnt_dir):
         pytest.fail('mount process did not terminate')
 
 
-def safe_sleep(secs):
+def safe_sleep(secs: int) -> None:
     '''Like time.sleep(), but sleep for at least *secs*
 
     `time.sleep` may sleep less than the given period if a signal is
@@ -58,7 +60,7 @@ def safe_sleep(secs):
         now = time.time()
 
 
-def fuse_test_marker():
+def fuse_test_marker() -> pytest.MarkDecorator:
     '''Return a pytest.marker that indicates FUSE availability
 
     If system/user/environment does not support FUSE, return
@@ -75,22 +77,21 @@ def fuse_test_marker():
     if not fusermount_path or which.returncode != 0:
         return skip('Can\'t find fusermount3 executable')
 
-    if not os.path.exists('/dev/fuse'):
+    if not Path('/dev/fuse').exists():
         return skip('FUSE kernel module does not seem to be loaded')
 
     if os.getuid() == 0:
         return pytest.mark.uses_fuse()
 
-    mode = os.stat(fusermount_path).st_mode
+    mode = Path(fusermount_path).stat().st_mode
     if mode & stat.S_ISUID == 0:
         return skip('fusermount3 executable not setuid, and we are not root.')
 
-    try:  # noqa: no-else-return
-        fd = os.open('/dev/fuse', os.O_RDWR)
+    try:
+        with os.fdopen(os.open('/dev/fuse', os.O_RDWR)) as _:
+            pass
     except OSError as exc:
         return skip(f'Unable to open /dev/fuse: {exc.strerror}')
-    else:
-        os.close(fd)
 
     return pytest.mark.uses_fuse()
 

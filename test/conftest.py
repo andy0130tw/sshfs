@@ -1,8 +1,25 @@
 import re
 import sys
 import time
+from typing import Generator
 
 import pytest
+
+
+__all__ = ['CaptureFixture']
+
+
+class CaptureFixture(pytest.CaptureFixture):
+    false_positives = []
+
+    def register_output(self, pattern: str, count: int = 1, flags: re.RegexFlag = re.MULTILINE) -> None:
+        '''Register *pattern* as false positive for output checking
+
+        This prevents the test from failing because the output otherwise
+        appears suspicious.
+        '''
+
+        self.false_positives.append((pattern, flags, count))
 
 
 # If a test fails, wait a moment before retrieving the captured
@@ -12,7 +29,7 @@ import pytest
 # error to FUSE (causing the test to fail), and then logs the exception. Without
 # the extra delay, the exception will go into nowhere.
 @pytest.mark.hookwrapper
-def pytest_pyfunc_call(pyfuncitem):  # noqa: unused-argument
+def pytest_pyfunc_call(pyfuncitem: pytest.Function) -> Generator[None, None, None]:  # noqa: unused-argument
     outcome = yield
     failed = outcome.excinfo is not None
     if failed:
@@ -20,12 +37,12 @@ def pytest_pyfunc_call(pyfuncitem):  # noqa: unused-argument
 
 
 @pytest.fixture()
-def pass_capfd(request, capfd):
+def pass_capfd(request: pytest.FixtureRequest, capfd: CaptureFixture) -> None:
     '''Provide capfd object to UnitTest instances'''
     request.instance.capfd = capfd
 
 
-def check_test_output(capfd):
+def check_test_output(capfd: CaptureFixture) -> None:
     (stdout, stderr) = capfd.readouterr()
 
     # Write back what we've read (so that it will still be printed.
@@ -64,30 +81,20 @@ def check_test_output(capfd):
             raise AssertionError(f'Suspicious output to stdout (matched "{hit.group(0)}")')
 
 
-def register_output(self, pattern, count=1, flags=re.MULTILINE):
-    '''Register *pattern* as false positive for output checking
-
-    This prevents the test from failing because the output otherwise
-    appears suspicious.
-    '''
-
-    self.false_positives.append((pattern, flags, count))
-
-
 # This is a terrible hack that allows us to access the fixtures from the
 # pytest_runtest_call hook. Among a lot of other hidden assumptions, it probably
 # relies on tests running sequential (i.e., don't dare to use e.g. the xdist
 # plugin)
-current_capfd = None
+current_capfd: CaptureFixture | None = None
 
 
 @pytest.yield_fixture(autouse=True)
-def save_cap_fixtures(request, capfd):
+def save_cap_fixtures(request, capfd: CaptureFixture) -> Generator[None, None, None]:
     global current_capfd  # noqa
     capfd.false_positives = []
 
     # Monkeypatch in a function to register false positives
-    type(capfd).register_output = register_output
+    type(capfd).register_output = CaptureFixture.register_output
 
     if request.config.getoption('capture') == 'no':
         capfd = None
@@ -102,7 +109,7 @@ def save_cap_fixtures(request, capfd):
 
 
 @pytest.hookimpl(trylast=True)
-def pytest_runtest_call(item):  # noqa: unused-argument
+def pytest_runtest_call(item: pytest.Item) -> None:  # noqa: unused-argument
     capfd = current_capfd
     if capfd is not None:
         check_test_output(capfd)
