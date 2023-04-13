@@ -14,12 +14,7 @@ from conftest import CaptureFixture
 from util import base_cmdline, basename, cleanup, fuse_test_marker, safe_sleep, umount, wait_for_mount
 
 
-TEST_FILE = Path(__file__)
-
 pytestmark = fuse_test_marker()
-
-with TEST_FILE.open('rb') as fh:
-    TEST_DATA = fh.read()
 
 
 class NameGenerator:
@@ -43,6 +38,7 @@ def name_in_dir(name: str, path: Path) -> bool:
 @pytest.mark.parametrize('multiconn', (True, False))
 def test_sshfs(  # noqa: too-many-statements
     tmp_path_factory: pytest.TempPathFactory,
+    data_file: (Path, bytes),
     debug: bool,
     cache_timeout: int,
     sync_rd: bool,
@@ -81,6 +77,7 @@ def test_sshfs(  # noqa: too-many-statements
 
     mnt_dir = tmp_path_factory.mktemp('mnt')
     src_dir = tmp_path_factory.mktemp('src')
+    test_data_file, test_data = data_file
 
     cmdline = [*base_cmdline, str(basename / 'build/sshfs'), '-f', f'localhost:{src_dir}', str(mnt_dir)]
     if debug:
@@ -121,9 +118,9 @@ def test_sshfs(  # noqa: too-many-statements
             wait_for_mount(mount_process, mnt_dir)
 
             tst_statvfs(mnt_dir)
-            tst_readdir(src_dir, mnt_dir)
-            tst_open_read(src_dir, mnt_dir)
-            tst_open_write(src_dir, mnt_dir)
+            tst_readdir(src_dir, mnt_dir, test_data_file)
+            tst_open_read(src_dir, mnt_dir, test_data_file)
+            tst_open_write(src_dir, mnt_dir, test_data_file)
             tst_append(src_dir, mnt_dir)
             tst_seek(src_dir, mnt_dir)
             tst_create(mnt_dir)
@@ -138,9 +135,9 @@ def test_sshfs(  # noqa: too-many-statements
             tst_utimens(mnt_dir)
             tst_utimens_now(mnt_dir)
 
-            tst_link(mnt_dir, cache_timeout)
-            tst_truncate_path(mnt_dir)
-            tst_truncate_fd(mnt_dir)
+            tst_link(mnt_dir, test_data_file, cache_timeout)
+            tst_truncate_path(mnt_dir, test_data)
+            tst_truncate_fd(mnt_dir, test_data)
             tst_open_unlink(mnt_dir)
         except:  # noqa: E722
             cleanup(mount_process, mnt_dir)
@@ -244,23 +241,23 @@ def tst_chown(mnt_dir: Path) -> None:
     assert fstat.st_gid == gid_new
 
 
-def tst_open_read(src_dir: Path, mnt_dir: Path) -> None:
+def tst_open_read(src_dir: Path, mnt_dir: Path, test_data_file: Path) -> None:
     name = name_generator()
-    with (src_dir / name).open('wb') as fh_out, TEST_FILE.open('rb') as fh_in:
+    with (src_dir / name).open('wb') as fh_out, test_data_file.open('rb') as fh_in:
         shutil.copyfileobj(fh_in, fh_out)
 
-    assert filecmp.cmp(mnt_dir / name, TEST_FILE, False)
+    assert filecmp.cmp(mnt_dir / name, test_data_file, False)
 
 
-def tst_open_write(src_dir: Path, mnt_dir: Path) -> None:
+def tst_open_write(src_dir: Path, mnt_dir: Path, test_data_file: Path) -> None:
     name = name_generator()
     fd = os.open(src_dir / name, os.O_CREAT | os.O_RDWR)
     os.close(fd)
     path = mnt_dir / name
-    with path.open('wb') as fh_out, TEST_FILE.open('rb') as fh_in:
+    with path.open('wb') as fh_out, test_data_file.open('rb') as fh_in:
         shutil.copyfileobj(fh_in, fh_out)
 
-    assert filecmp.cmp(path, TEST_FILE, False)
+    assert filecmp.cmp(path, test_data_file, False)
 
 
 def tst_append(src_dir: Path, mnt_dir: Path) -> None:
@@ -312,11 +309,11 @@ def tst_statvfs(mnt_dir: Path) -> None:
     os.statvfs(mnt_dir)
 
 
-def tst_link(mnt_dir: Path, cache_timeout: int) -> None:
+def tst_link(mnt_dir: Path, test_data_file: Path, cache_timeout: int) -> None:
     path1 = mnt_dir / name_generator()
     path2 = mnt_dir / name_generator()
-    shutil.copyfile(TEST_FILE, path1)
-    assert filecmp.cmp(path1, TEST_FILE, False)
+    shutil.copyfile(test_data_file, path1)
+    assert filecmp.cmp(path1, test_data_file, False)
 
     fstat1 = path1.lstat()
     assert fstat1.st_nlink == 1
@@ -347,7 +344,7 @@ def tst_link(mnt_dir: Path, cache_timeout: int) -> None:
     path1.unlink()
 
 
-def tst_readdir(src_dir: Path, mnt_dir: Path) -> None:
+def tst_readdir(src_dir: Path, mnt_dir: Path, test_data_file: Path) -> None:
     newdir = name_generator()
     src_newdir = src_dir / newdir
     mnt_newdir = mnt_dir / newdir
@@ -356,9 +353,9 @@ def tst_readdir(src_dir: Path, mnt_dir: Path) -> None:
     subfile = subdir / name_generator()
 
     src_newdir.mkdir()
-    shutil.copyfile(TEST_FILE, file_)
+    shutil.copyfile(test_data_file, file_)
     subdir.mkdir()
-    shutil.copyfile(TEST_FILE, subfile)
+    shutil.copyfile(test_data_file, subfile)
 
     listdir_is = sorted(path.name for path in mnt_newdir.iterdir())
     listdir_should = [file_.name, subdir.name]
@@ -371,54 +368,54 @@ def tst_readdir(src_dir: Path, mnt_dir: Path) -> None:
     src_newdir.rmdir()
 
 
-def tst_truncate_path(mnt_dir: Path) -> None:
-    assert len(TEST_DATA) > 1024
+def tst_truncate_path(mnt_dir: Path, test_data: bytes) -> None:
+    assert len(test_data) > 1024
 
     path = mnt_dir / name_generator()
     with path.open('wb') as fh_:
-        fh_.write(TEST_DATA)
+        fh_.write(test_data)
 
     fstat = path.stat()
     size = fstat.st_size
-    assert size == len(TEST_DATA)
+    assert size == len(test_data)
 
     # Add zeros at the end
     os.truncate(path, size + 1024)
     assert path.stat().st_size == size + 1024
     with path.open('rb') as fh_:
-        assert fh_.read(size) == TEST_DATA
+        assert fh_.read(size) == test_data
         assert fh_.read(1025) == b'\0' * 1024
 
     # Truncate data
     os.truncate(path, size - 1024)
     assert path.stat().st_size == size - 1024
     with path.open('rb') as fh_:
-        assert fh_.read(size) == TEST_DATA[: size - 1024]
+        assert fh_.read(size) == test_data[: size - 1024]
 
     path.unlink()
 
 
-def tst_truncate_fd(mnt_dir: Path) -> None:
-    assert len(TEST_DATA) > 1024
+def tst_truncate_fd(mnt_dir: Path, test_data: bytes) -> None:
+    assert len(test_data) > 1024
     with NamedTemporaryFile('w+b', 0, dir=mnt_dir) as fh_:
         fd = fh_.fileno()
-        fh_.write(TEST_DATA)
+        fh_.write(test_data)
         fstat = os.fstat(fd)
         size = fstat.st_size
-        assert size == len(TEST_DATA)
+        assert size == len(test_data)
 
         # Add zeros at the end
         os.ftruncate(fd, size + 1024)
         assert os.fstat(fd).st_size == size + 1024
         fh_.seek(0)
-        assert fh_.read(size) == TEST_DATA
+        assert fh_.read(size) == test_data
         assert fh_.read(1025) == b'\0' * 1024
 
         # Truncate data
         os.ftruncate(fd, size - 1024)
         assert os.fstat(fd).st_size == size - 1024
         fh_.seek(0)
-        assert fh_.read(size) == TEST_DATA[: size - 1024]
+        assert fh_.read(size) == test_data[: size - 1024]
 
 
 def tst_utimens(mnt_dir: Path) -> None:

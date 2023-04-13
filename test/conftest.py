@@ -1,6 +1,9 @@
+import random
 import re
+import string
 import sys
 import time
+from pathlib import Path
 from typing import Generator
 
 import pytest
@@ -79,6 +82,17 @@ def check_test_output(capfd: CaptureFixture) -> None:
         hit = cp.search(stdout)
         if hit:
             raise AssertionError(f'Suspicious output to stdout (matched "{hit.group(0)}")')
+
+
+@pytest.fixture(scope='session', autouse=True)
+def data_file(tmp_path_factory: pytest.TempPathFactory) -> (Path, bytes):
+    data_dir = tmp_path_factory.mktemp('data')
+    test_data_file = data_dir / 'data.txt'
+    random.seed(12345)
+    test_data = ''.join(random.choices(string.ascii_letters + string.digits, k=2048)).encode()
+    with test_data_file.open('wb') as fh:
+        fh.write(test_data)
+    return test_data_file, test_data
 
 
 # This is a terrible hack that allows us to access the fixtures from the
