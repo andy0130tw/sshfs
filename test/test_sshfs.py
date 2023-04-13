@@ -447,7 +447,7 @@ def tst_open_unlink(mnt_dir: Path) -> None:
         path.unlink()
         with pytest.raises(OSError) as exc_info:
             path.lstat()
-            assert exc_info.value.errno == errno.ENOENT
+        assert exc_info.value.errno == errno.ENOENT
         assert not name_in_dir(name, mnt_dir)
         fh_.write(data2)
         fh_.seek(0)
