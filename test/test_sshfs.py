@@ -161,7 +161,7 @@ def tst_unlink(src_dir: Path, mnt_dir: Path, cache_timeout: int) -> None:
     assert name_in_dir(name, mnt_dir)
     path.unlink()
     with pytest.raises(OSError) as exc_info:
-        path.stat()
+        path.lstat()
     assert exc_info.value.errno == errno.ENOENT
     assert not name_in_dir(name, mnt_dir)
     assert not name_in_dir(name, src_dir)
@@ -171,7 +171,7 @@ def tst_mkdir(mnt_dir: Path) -> None:
     dirname = name_generator()
     path = mnt_dir / dirname
     path.mkdir()
-    fstat = path.stat()
+    fstat = path.lstat()
     assert stat.S_ISDIR(fstat.st_mode)
     assert not list(path.iterdir())
     assert fstat.st_nlink in (1, 2)
@@ -187,7 +187,7 @@ def tst_rmdir(src_dir: Path, mnt_dir: Path, cache_timeout: int) -> None:
     assert name_in_dir(dirname, mnt_dir)
     path.rmdir()
     with pytest.raises(OSError) as exc_info:
-        path.stat()
+        path.lstat()
     assert exc_info.value.errno == errno.ENOENT
     assert not name_in_dir(dirname, mnt_dir)
     assert not name_in_dir(dirname, src_dir)
@@ -208,7 +208,7 @@ def tst_create(mnt_dir: Path) -> None:
     name = name_generator()
     path = mnt_dir / name
     with pytest.raises(OSError) as exc_info:
-        path.stat()
+        path.lstat()
     assert exc_info.value.errno == errno.ENOENT
     assert not name_in_dir(name, mnt_dir)
 
@@ -297,7 +297,7 @@ def tst_open_unlink(mnt_dir: Path) -> None:
         fh_.write(data1)
         path.unlink()
         with pytest.raises(OSError) as exc_info:
-            path.stat()
+            path.lstat()
             assert exc_info.value.errno == errno.ENOENT
         assert not name_in_dir(name, mnt_dir)
         fh_.write(data2)
@@ -375,20 +375,20 @@ def tst_truncate_path(mnt_dir: Path, test_data: bytes) -> None:
     with path.open('wb') as fh_:
         fh_.write(test_data)
 
-    fstat = path.stat()
+    fstat = path.lstat()
     size = fstat.st_size
     assert size == len(test_data)
 
     # Add zeros at the end
     os.truncate(path, size + 1024)
-    assert path.stat().st_size == size + 1024
+    assert path.lstat().st_size == size + 1024
     with path.open('rb') as fh_:
         assert fh_.read(size) == test_data
         assert fh_.read(1025) == b'\0' * 1024
 
     # Truncate data
     os.truncate(path, size - 1024)
-    assert path.stat().st_size == size - 1024
+    assert path.lstat().st_size == size - 1024
     with path.open('rb') as fh_:
         assert fh_.read(size) == test_data[: size - 1024]
 
@@ -456,7 +456,7 @@ def tst_passthrough(src_dir: Path, mnt_dir: Path, cache_timeout: int) -> None:
     if cache_timeout:
         safe_sleep(cache_timeout + 1)
     assert name_in_dir(name, mnt_dir)
-    assert src_path.stat() == mnt_path.stat()
+    assert src_path.lstat() == mnt_path.lstat()
 
     name = name_generator()
     src_path = src_dir / name
@@ -469,7 +469,7 @@ def tst_passthrough(src_dir: Path, mnt_dir: Path, cache_timeout: int) -> None:
     if cache_timeout:
         safe_sleep(cache_timeout + 1)
     assert name_in_dir(name, mnt_dir)
-    assert src_path.stat() == mnt_path.stat()
+    assert src_path.lstat() == mnt_path.lstat()
 
 
 if __name__ == '__main__':
