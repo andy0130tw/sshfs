@@ -1,28 +1,17 @@
+import itertools
+import os
 import random
-import re
 import string
-import sys
+import subprocess
 import time
 from pathlib import Path
-from typing import Generator
+from typing import Generator, NamedTuple
 
 import pytest
+from util import base_cmdline, basename, cleanup, umount, wait_for_mount
 
 
-__all__ = ['CaptureFixture']
-
-
-class CaptureFixture(pytest.CaptureFixture):
-    false_positives = []
-
-    def register_output(self, pattern: str, count: int = 1, flags: re.RegexFlag = re.MULTILINE) -> None:
-        '''Register *pattern* as false positive for output checking
-
-        This prevents the test from failing because the output otherwise
-        appears suspicious.
-        '''
-
-        self.false_positives.append((pattern, flags, count))
+__all__ = ['DataFile', 'SshfsDirs']
 
 
 # If a test fails, wait a moment before retrieving the captured
@@ -39,91 +28,118 @@ def pytest_pyfunc_call(pyfuncitem: pytest.Function) -> Generator[None, None, Non
         time.sleep(1)
 
 
-@pytest.fixture()
-def pass_capfd(request: pytest.FixtureRequest, capfd: CaptureFixture) -> None:
-    '''Provide capfd object to UnitTest instances'''
-    request.instance.capfd = capfd
-
-
-def check_test_output(capfd: CaptureFixture) -> None:
-    (stdout, stderr) = capfd.readouterr()
-
-    # Write back what we've read (so that it will still be printed.
-    sys.stdout.write(stdout)
-    sys.stderr.write(stderr)
-
-    # Strip out false positives
-    for pattern, flags, count in capfd.false_positives:
-        cp = re.compile(pattern, flags)
-        (stdout, cnt) = cp.subn('', stdout, count=count)
-        if count == 0 or count - cnt > 0:
-            stderr = cp.sub('', stderr, count=count - cnt)
-
-    patterns = [
-        rf'\b{x}\b'
-        for x in (
-            'exception',
-            'error',
-            'warning',
-            'fatal',
-            'traceback',
-            'fault',
-            'crash(?:ed)?',
-            'abort(?:ed)',
-            'uninitiali[zs]ed',
-        )
-    ]
-    patterns += ['^==[0-9]+== ']
-    for pattern in patterns:
-        cp = re.compile(pattern, re.IGNORECASE | re.MULTILINE)
-        hit = cp.search(stderr)
-        if hit:
-            raise AssertionError(f'Suspicious output to stderr (matched "{hit.group(0)}")')
-        hit = cp.search(stdout)
-        if hit:
-            raise AssertionError(f'Suspicious output to stdout (matched "{hit.group(0)}")')
+class DataFile(NamedTuple):
+    path: Path
+    data: bytes
 
 
 @pytest.fixture(scope='session', autouse=True)
-def data_file(tmp_path_factory: pytest.TempPathFactory) -> (Path, bytes):
+def data_file(tmp_path_factory: pytest.TempPathFactory) -> DataFile:
     data_dir = tmp_path_factory.mktemp('data')
     test_data_file = data_dir / 'data.txt'
     random.seed(12345)
     test_data = ''.join(random.choices(string.ascii_letters + string.digits, k=2048)).encode()
     with test_data_file.open('wb') as fh:
         fh.write(test_data)
-    return test_data_file, test_data
+    return DataFile(test_data_file, test_data)
 
 
-# This is a terrible hack that allows us to access the fixtures from the
-# pytest_runtest_call hook. Among a lot of other hidden assumptions, it probably
-# relies on tests running sequential (i.e., don't dare to use e.g. the xdist
-# plugin)
-current_capfd: CaptureFixture | None = None
+def product_dict_values(options: dict) -> list:
+    return [tuple(zip(options.keys(), value_combo)) for value_combo in itertools.product(*options.values())]
 
 
-@pytest.yield_fixture(autouse=True)
-def save_cap_fixtures(request, capfd: CaptureFixture) -> Generator[None, None, None]:
-    global current_capfd  # noqa
-    capfd.false_positives = []
-
-    # Monkeypatch in a function to register false positives
-    type(capfd).register_output = CaptureFixture.register_output
-
-    if request.config.getoption('capture') == 'no':
-        capfd = None
-    current_capfd = capfd
-    bak = current_capfd
-    yield
-
-    # Try to catch problems with this hack (e.g. when running tests
-    # simultaneously)
-    assert bak is current_capfd
-    current_capfd = None
+class SshfsDirs(NamedTuple):
+    src_dir: Path
+    mnt_dir: Path
+    cache_timeout: int
 
 
-@pytest.hookimpl(trylast=True)
-def pytest_runtest_call(item: pytest.Item) -> None:  # noqa: unused-argument
-    capfd = current_capfd
-    if capfd is not None:
-        check_test_output(capfd)
+@pytest.fixture(
+    scope='session',
+    params=product_dict_values(
+        {
+            'debug': [False, True],
+            'cache_timeout': [0, 1],
+            'sync_rd': [True, False],
+            'multiconn': [True, False],
+        }
+    ),
+)
+def sshfs_dirs(  # noqa: too-many-statements
+    tmp_path_factory: pytest.TempPathFactory, request: pytest.FixtureRequest
+) -> Generator[SshfsDirs, None, None]:
+    param_dict = dict(request.param)
+    debug: bool = param_dict['debug']
+    cache_timeout: int = param_dict['cache_timeout']
+    sync_rd: bool = param_dict['sync_rd']
+    multiconn: bool = param_dict['multiconn']
+
+    # Test if we can ssh into localhost without password
+    try:
+        res = subprocess.call(
+            [
+                'ssh',
+                '-o',
+                'KbdInteractiveAuthentication=no',
+                '-o',
+                'ChallengeResponseAuthentication=no',
+                '-o',
+                'PasswordAuthentication=no',
+                'localhost',
+                '--',
+                'true',
+            ],
+            stdin=subprocess.DEVNULL,
+            timeout=10,
+        )
+    except subprocess.TimeoutExpired:
+        res = 1
+    if res != 0:
+        pytest.fail('Unable to ssh into localhost without password prompt.')
+
+    mnt_dir = tmp_path_factory.mktemp('mnt')
+    src_dir = tmp_path_factory.mktemp('src')
+
+    cmdline = [*base_cmdline, str(basename / 'build/sshfs'), '-f', f'localhost:{src_dir}', str(mnt_dir)]
+    if debug:
+        cmdline += ['-o', 'sshfs_debug']
+
+    if sync_rd:
+        cmdline += ['-o', 'sync_readdir']
+
+    # SSHFS Cache
+    if cache_timeout == 0:
+        cmdline += ['-o', 'dir_cache=no']
+    else:
+        cmdline += [
+            '-o',
+            f'dcache_timeout={cache_timeout}',
+            '-o',
+            'dir_cache=yes',
+        ]
+
+    # FUSE Cache
+    cmdline += [
+        '-o',
+        'entry_timeout=0',
+        '-o',
+        'attr_timeout=0',
+    ]
+
+    if multiconn:
+        cmdline += ['-o', 'max_conns=3']
+
+    new_env = dict(os.environ)  # copy, don't modify
+
+    # Abort on warnings from glib
+    new_env['G_DEBUG'] = 'fatal-warnings'
+
+    with subprocess.Popen(cmdline, env=new_env) as mount_process:
+        try:  # noqa: no-else-return
+            wait_for_mount(mount_process, mnt_dir)
+            yield SshfsDirs(src_dir, mnt_dir, cache_timeout)
+        except:  # noqa: E722
+            cleanup(mount_process, mnt_dir)
+            raise
+        else:
+            umount(mount_process, mnt_dir)
