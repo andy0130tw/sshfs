@@ -43,5 +43,5 @@ Normally, the default build options will work fine. If you nevertheless want to 
 To build, test and install *SSHFS*, you then use *Ninja* (running the tests requires the [py.test](http://www.pytest.org/) *Python* module):
 
     $ ninja
-    $ python -m pytest test/
+    $ python -m pytest --numprocesses 10 test/
     $ sudo ninja install
