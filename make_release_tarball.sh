@@ -17,10 +17,7 @@ echo "Creating release tarball for ${TAG}..."
 mkdir "${TAG}"
 git archive --format=tar "${TAG}" | tar -x "--directory=${TAG}"
 find "${TAG}" -name .gitignore -delete
-rm "${TAG}/make_release_tarball.sh" \
-   "${TAG}/.travis.yml" \
-   "${TAG}/test/travis-build.sh" \
-   "${TAG}/test/travis-install.sh"
+rm "${TAG}/make_release_tarball.sh"
 tar -cJf "${TAG}.tar.xz" "${TAG}/"
 gpg --armor --detach-sign "${TAG}.tar.xz"
 
