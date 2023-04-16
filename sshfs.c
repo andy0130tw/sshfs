@@ -1024,19 +1024,22 @@ static int buf_get_attrs(struct buffer *buf, struct stat *stbuf, int *flagsp,
     }
 
     unsigned uid = sshfs.nobody_uid, gid = sshfs.nobody_gid;
-    if (sshfs.remote_uname_detected) {
-        if (strcmp(remote_uname, sshfs.remote_uname) == 0)
-            uid = sshfs.local_uid;
-        if (strcmp(remote_gname, sshfs.remote_gname) == 0)
-            gid = sshfs.local_gid;
-    }
     if (remote_uname != NULL && remote_gname != NULL) {
-        if (sshfs.namemap == NAMEMAP_FILE && sshfs.uname_to_id)
-            if (translate_name_to_id(remote_uname, &uid, sshfs.uname_to_id) == -1)
-                return -EPERM;
-        if (sshfs.namemap == NAMEMAP_FILE && sshfs.gname_to_id)
-            if (translate_name_to_id(remote_gname, &gid, sshfs.gname_to_id) == -1)
-                return -EPERM;
+        if (sshfs.namemap == NAMEMAP_USER) {
+            if (sshfs.remote_uname_detected) {
+                if (strcmp(remote_uname, sshfs.remote_uname) == 0)
+                    uid = sshfs.local_uid;
+                if (strcmp(remote_gname, sshfs.remote_gname) == 0)
+                    gid = sshfs.local_gid;
+            }
+        } else if (sshfs.namemap == NAMEMAP_FILE) {
+            if (sshfs.uname_to_id)
+                if (translate_name_to_id(remote_uname, &uid, sshfs.uname_to_id) == -1)
+                    return -EPERM;
+            if (sshfs.gname_to_id)
+                if (translate_name_to_id(remote_gname, &gid, sshfs.gname_to_id) == -1)
+                    return -EPERM;
+        }
     }
 
     memset(stbuf, 0, sizeof(struct stat));
