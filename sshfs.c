@@ -2769,15 +2769,18 @@ static int sshfs_chown(const char *path, uid_t uid, gid_t gid,
     }
 
     if (sshfs.remote_uname_detected) {
-        if (uid == sshfs.local_uid)
+        if (remote_uname == NULL && uid == sshfs.local_uid)
             remote_uname = sshfs.remote_uname;
-        if (gid == sshfs.local_gid)
+        if (remote_gname == NULL && gid == sshfs.local_gid)
             remote_gname = sshfs.remote_gname;
     }
-    if (sshfs.namemap == NAMEMAP_FILE && sshfs.uid_to_name)
-        translate_id_to_name(uid, &remote_uname, sshfs.uid_to_name);
-    if (sshfs.namemap == NAMEMAP_FILE && sshfs.gid_to_name)
-        translate_id_to_name(gid, &remote_gname, sshfs.gid_to_name);
+    if (sshfs.namemap == NAMEMAP_FILE){
+        // Allow `namemap` to override
+        if (sshfs.uid_to_name != NULL)
+            translate_id_to_name(uid, &remote_uname, sshfs.uid_to_name);
+        if (sshfs.gid_to_name != NULL)
+            translate_id_to_name(gid, &remote_gname, sshfs.gid_to_name);
+    }
     if (remote_uname == NULL || remote_gname == NULL)
         return -EPERM;
 
