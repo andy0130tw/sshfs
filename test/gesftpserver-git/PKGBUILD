@@ -1,0 +1,43 @@
+pkgname=gesftpserver-git
+_pkgname=sftpserver
+pkgver=2.r11.g11eb2e3
+pkgrel=1
+pkgdesc="Green End SFTP Server - experimental free SFTP server"
+arch=('any')
+url="http://www.greenend.org.uk/rjk/sftpserver/"
+license=('GPL2')
+depends=()
+source=('git+https://github.com/ewxrjk/sftpserver.git')
+sha512sums=('SKIP')
+
+if [ -z "$PREFIX" ] || [ "$PREFIX" != /data/data/com.termux/files/usr ]; then
+  PREFIX='/usr'
+fi
+
+pkgver() {
+  cd "$_pkgname"
+  git describe --long --abbrev=7 | sed 's/\([^-]*-g\)/r\1/;s/-/./g'
+}
+
+prepare() {
+  cd "$_pkgname"
+  patch --forward --strip=1 --input="${srcdir}/../nanosecond.patch"
+}
+
+build() {
+  cd "$_pkgname"
+  ./autogen.sh
+  ./configure --prefix=$PREFIX
+  make
+}
+
+check() {
+  cd "$_pkgname"
+  make check || warning "Tests failed"
+}
+
+package() {
+  cd "$_pkgname"
+  make DESTDIR=${pkgdir} install
+  mv "${pkgdir}${PREFIX}/libexec/" "${pkgdir}${PREFIX}/lib/"
+}
