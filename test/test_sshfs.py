@@ -380,6 +380,32 @@ def test_open_unlink(sshfs_dirs: SshfsDirs) -> None:
         assert fh_.read() == data1 + data2
 
 
+def test_namemap_user(sshfs_dirs_namemap_user: SshfsDirs) -> None:
+    if os.getuid() != 0:
+        pytest.skip('Root required')
+
+    name = name_generator()
+    src_path = sshfs_dirs_namemap_user.src_dir / name
+    src_path.mkdir()
+
+    mnt_path = sshfs_dirs_namemap_user.mnt_dir / name
+    assert mnt_path.owner() == 'root'
+    assert mnt_path.group() == 'root'
+
+
+def test_namemap_file(sshfs_dirs_namemap_file: SshfsDirs) -> None:
+    if os.getuid() != 0:
+        pytest.skip('Root required')
+
+    name = name_generator()
+    src_path = sshfs_dirs_namemap_file.src_dir / name
+    src_path.mkdir()
+
+    mnt_path = sshfs_dirs_namemap_file.mnt_dir / name
+    assert mnt_path.owner() == 'foo_user'
+    assert mnt_path.group() == 'bar_group'
+
+
 def test_chown(sshfs_dirs_namemap_file: SshfsDirs) -> None:
     if os.getuid() != 0:
         pytest.skip('Root required')
