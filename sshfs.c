@@ -2954,8 +2954,8 @@ static int sshfs_open_common(const char *path, mode_t mode,
                       &open_req);
     buf_clear(&buf);
     buf_add_path(&buf, path);
-    type = sshfs.follow_symlinks ? SSH_FXP_STAT : SSH_FXP_LSTAT;
     buf_add_uint32(&buf, USED_ATTRS);
+    type = sshfs.follow_symlinks ? SSH_FXP_STAT : SSH_FXP_LSTAT;
     err2 = sftp_request(sf->conn, type, &buf, SSH_FXP_ATTRS, &outbuf);
     if (!err2) {
         err2 = buf_get_attrs(&outbuf, &stbuf, NULL, NULL, NULL);
