@@ -22,6 +22,9 @@ docker container run \
     --device /dev/fuse \
     $image_name
 
+docker exec $container_name groupadd bar_group
+docker exec $container_name useradd foo_user --no-user-group --gid bar_group
+
 docker exec $container_name mkdir /tmp/sshfs/build/
 docker cp $dir/../build/sshfs $container_name:/tmp/sshfs/build/
 

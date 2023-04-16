@@ -4,8 +4,10 @@ import random
 import string
 import subprocess
 import time
+from contextlib import contextmanager
+from enum import Enum, auto
 from pathlib import Path
-from typing import Generator, NamedTuple
+from typing import Callable, Generator, NamedTuple
 
 import pytest
 from util import base_cmdline, basename, cleanup, umount, wait_for_mount
@@ -54,26 +56,21 @@ class SshfsDirs(NamedTuple):
     cache_timeout: int
 
 
-@pytest.fixture(
-    scope='session',
-    params=product_dict_values(
-        {
-            'debug': [False, True],
-            'cache_timeout': [0, 1],
-            'sync_rd': [True, False],
-            'multiconn': [True, False],
-        }
-    ),
-)
-def sshfs_dirs(  # noqa: too-many-statements
-    tmp_path_factory: pytest.TempPathFactory, request: pytest.FixtureRequest
-) -> Generator[SshfsDirs, None, None]:
-    param_dict = dict(request.param)
-    debug: bool = param_dict['debug']
-    cache_timeout: int = param_dict['cache_timeout']
-    sync_rd: bool = param_dict['sync_rd']
-    multiconn: bool = param_dict['multiconn']
+class NamemapType(Enum):
+    NONE = auto()
+    USER = auto()
+    FILE = auto()
 
+
+@contextmanager
+def mount_sshfs(  # noqa: too-many-locals
+    tmp_path_factory: pytest.TempPathFactory,
+    debug: bool,
+    cache_timeout: int,
+    sync_rd: bool,
+    multiconn: bool,
+    namemap: NamemapType,
+) -> Generator[SshfsDirs, None, None]:
     # Test if we can ssh into localhost without password
     try:
         res = subprocess.call(
@@ -97,6 +94,7 @@ def sshfs_dirs(  # noqa: too-many-statements
     if res != 0:
         pytest.fail('Unable to ssh into localhost without password prompt.')
 
+    conf_dir = tmp_path_factory.mktemp('conf')
     mnt_dir = tmp_path_factory.mktemp('mnt')
     src_dir = tmp_path_factory.mktemp('src')
 
@@ -129,6 +127,19 @@ def sshfs_dirs(  # noqa: too-many-statements
     if multiconn:
         cmdline += ['-o', 'max_conns=3']
 
+    match namemap:
+        case NamemapType.USER:
+            cmdline += ['-o', 'namemap=user']
+        case NamemapType.FILE:
+            cmdline += ['-o', 'namemap=file']
+            unamemap_path = conf_dir / 'unamefile.txt'
+            with unamemap_path.open('w') as sr:
+                sr.write('foo_user:root\n')
+            gnamemap_path = conf_dir / 'gnamefile.txt'
+            with gnamemap_path.open('w') as sr:
+                sr.write('bar_group:root\n')
+            cmdline += ['-o', f'unamefile={unamemap_path}', '-o', f'gnamefile={gnamemap_path}']
+
     new_env = dict(os.environ)  # copy, don't modify
 
     # Abort on warnings from glib
@@ -143,3 +154,37 @@ def sshfs_dirs(  # noqa: too-many-statements
             raise
         else:
             umount(mount_process, mnt_dir)
+
+
+def create_sshfs_dirs_fixture(name_map: NamemapType) -> Callable:
+    @pytest.fixture(
+        scope='session',
+        params=product_dict_values(
+            {
+                'debug': [False, True],
+                'cache_timeout': [0, 1],
+                'sync_rd': [True, False],
+                'multiconn': [True, False],
+            }
+        ),
+    )
+    def fixture(  # noqa: too-many-statements
+        tmp_path_factory: pytest.TempPathFactory, request: pytest.FixtureRequest
+    ) -> Generator[SshfsDirs, None, None]:
+        param_dict = dict(request.param)
+        with mount_sshfs(
+            tmp_path_factory,
+            param_dict['debug'],
+            param_dict['cache_timeout'],
+            param_dict['sync_rd'],
+            param_dict['multiconn'],
+            name_map,
+        ) as sshfs_dirs_:
+            yield sshfs_dirs_
+
+    return fixture
+
+
+sshfs_dirs = create_sshfs_dirs_fixture(NamemapType.NONE)
+sshfs_dirs_namemap_user = create_sshfs_dirs_fixture(NamemapType.USER)
+sshfs_dirs_namemap_file = create_sshfs_dirs_fixture(NamemapType.FILE)

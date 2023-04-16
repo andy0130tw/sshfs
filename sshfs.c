@@ -2759,8 +2759,12 @@ static int sshfs_chown(const char *path, uid_t uid, gid_t gid,
     (void) fi;
     char *remote_uname = NULL, *remote_gname = NULL;
     int err;
+    int err2;
     struct buffer buf;
+    struct buffer outbuf;
     struct sshfs_file *sf = NULL;
+    struct stat stbuf;
+    uint8_t type;
 
     if (fi != NULL) {
         sf = get_sshfs_file(fi);
@@ -2781,10 +2785,26 @@ static int sshfs_chown(const char *path, uid_t uid, gid_t gid,
         if (sshfs.gid_to_name != NULL)
             translate_id_to_name(gid, &remote_gname, sshfs.gid_to_name);
     }
+
+    buf_init(&buf, 0);
+    if ((remote_uname == NULL && uid == -1) || (remote_gname == NULL && gid == -1)) {
+        buf_add_path(&buf, path);
+        buf_add_uint32(&buf, SSH_FILEXFER_ATTR_OWNERGROUP);
+        type = sshfs.follow_symlinks ? SSH_FXP_STAT : SSH_FXP_LSTAT;
+        err2 = sftp_request(get_conn(sf, path), type, &buf, SSH_FXP_ATTRS, &outbuf);
+        if (!err2) {
+            err2 = buf_get_attrs(&outbuf, &stbuf, NULL, &remote_uname, &remote_gname);
+        }
+        buf_free(&outbuf);
+        if (err2) {
+            err = err2;
+            goto out;
+        }
+    }
     if (remote_uname == NULL || remote_gname == NULL)
         return -EPERM;
 
-    buf_init(&buf, 0);
+    buf_clear(&buf);
     if (sf == NULL)
         buf_add_path(&buf, path);
     else
@@ -2799,6 +2819,8 @@ static int sshfs_chown(const char *path, uid_t uid, gid_t gid,
     err = sftp_request(get_conn(sf, NULL),
                        sf == NULL ? SSH_FXP_SETSTAT : SSH_FXP_FSETSTAT,
                        &buf, SSH_FXP_STATUS, NULL);
+
+out:
     buf_free(&buf);
     return err;
 }

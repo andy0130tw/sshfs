@@ -2,6 +2,7 @@
 import errno
 import filecmp
 import os
+import pwd
 import shutil
 import stat
 import sys
@@ -379,23 +380,24 @@ def test_open_unlink(sshfs_dirs: SshfsDirs) -> None:
         assert fh_.read() == data1 + data2
 
 
-def test_chown(sshfs_dirs: SshfsDirs) -> None:
+def test_chown(sshfs_dirs_namemap_file: SshfsDirs) -> None:
     if os.getuid() != 0:
         pytest.skip('Root required')
 
-    path = sshfs_dirs.mnt_dir / name_generator()
+    path = sshfs_dirs_namemap_file.mnt_dir / name_generator()
     path.mkdir()
     fstat = path.lstat()
-    uid = fstat.st_uid
     gid = fstat.st_gid
 
-    uid_new = uid + 1
+    pw_new = pwd.getpwnam('foo_user')
+
+    uid_new = pw_new.pw_uid
     os.chown(path, uid_new, -1)
     fstat = path.lstat()
     assert fstat.st_uid == uid_new
     assert fstat.st_gid == gid
 
-    gid_new = gid + 1
+    gid_new = pw_new.pw_gid
     os.chown(path, -1, gid_new)
     fstat = path.lstat()
     assert fstat.st_uid == uid_new
