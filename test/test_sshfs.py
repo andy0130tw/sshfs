@@ -29,6 +29,13 @@ class NameGenerator:
 name_generator = NameGenerator()
 
 
+def is_docker() -> bool:
+    if Path('/.dockerenv').is_file():
+        return True
+    cgroup_path = Path('/proc/self/cgroup')
+    return cgroup_path.is_file() and 'docker' in cgroup_path.read_text(encoding='utf-8')
+
+
 def name_in_dir(name: str, path: Path) -> bool:
     return any(name == cur_path.name for cur_path in path.iterdir())
 
@@ -378,21 +385,21 @@ def test_open_unlink(sshfs_dirs: SshfsDirs) -> None:
 
 
 def test_namemap_user(sshfs_dirs_namemap_user: SshfsDirs) -> None:
-    if os.getuid() != 0:
-        pytest.skip('Root required')
-
     name = name_generator()
     src_path = sshfs_dirs_namemap_user.src_dir / name
     src_path.mkdir()
 
+    cur_pw = pwd.getpwuid(os.geteuid())
+    cur_grp = grp.getgrgid(cur_pw.pw_gid)
+
     mnt_path = sshfs_dirs_namemap_user.mnt_dir / name
-    assert mnt_path.owner() == 'root'
-    assert mnt_path.group() == 'root'
+    assert mnt_path.owner() == cur_pw.pw_name
+    assert mnt_path.group() == cur_grp.gr_name
 
 
 def test_namemap_file(sshfs_dirs_namemap_file: SshfsDirs) -> None:
-    if os.getuid() != 0:
-        pytest.skip('Root required')
+    if not is_docker():
+        pytest.skip('Docker required')
 
     name = name_generator()
     src_path = sshfs_dirs_namemap_file.src_dir / name
@@ -404,9 +411,6 @@ def test_namemap_file(sshfs_dirs_namemap_file: SshfsDirs) -> None:
 
 
 def test_namemap_file_empty(sshfs_dirs_namemap_file_not_found: SshfsDirs) -> None:
-    if os.getuid() != 0:
-        pytest.skip('Root required')
-
     name = name_generator()
     src_path = sshfs_dirs_namemap_file_not_found.src_dir / name
     src_path.mkdir()
@@ -420,8 +424,8 @@ def test_namemap_file_empty(sshfs_dirs_namemap_file_not_found: SshfsDirs) -> Non
 
 
 def test_chown(sshfs_dirs_namemap_file: SshfsDirs) -> None:
-    if os.getuid() != 0:
-        pytest.skip('Root required')
+    if os.getuid() != 0 or not is_docker():
+        pytest.skip('Root and docker required')
 
     name = name_generator()
     src_path = sshfs_dirs_namemap_file.src_dir / name
