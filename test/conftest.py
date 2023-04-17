@@ -56,10 +56,11 @@ class SshfsDirs(NamedTuple):
     cache_timeout: int
 
 
-class NamemapType(Enum):
+class TestNamemapType(Enum):
     NONE = auto()
     USER = auto()
     FILE = auto()
+    FILE_EMPTY = auto()
 
 
 @contextmanager
@@ -69,7 +70,7 @@ def mount_sshfs(  # noqa: too-many-locals
     cache_timeout: int,
     sync_rd: bool,
     multiconn: bool,
-    namemap: NamemapType,
+    namemap: TestNamemapType,
 ) -> Generator[SshfsDirs, None, None]:
     # Test if we can ssh into localhost without password
     try:
@@ -128,9 +129,9 @@ def mount_sshfs(  # noqa: too-many-locals
         cmdline += ['-o', 'max_conns=3']
 
     match namemap:
-        case NamemapType.USER:
+        case TestNamemapType.USER:
             cmdline += ['-o', 'namemap=user']
-        case NamemapType.FILE:
+        case TestNamemapType.FILE:
             cmdline += ['-o', 'namemap=file']
             unamemap_path = conf_dir / 'unamefile.txt'
             with unamemap_path.open('w') as sr:
@@ -138,6 +139,13 @@ def mount_sshfs(  # noqa: too-many-locals
             gnamemap_path = conf_dir / 'gnamefile.txt'
             with gnamemap_path.open('w') as sr:
                 sr.write('bar_group:root\n')
+            cmdline += ['-o', f'unamefile={unamemap_path}', '-o', f'gnamefile={gnamemap_path}']
+        case TestNamemapType.FILE_EMPTY:
+            cmdline += ['-o', 'namemap=file']
+            unamemap_path = conf_dir / 'unamefile.txt'
+            unamemap_path.touch()
+            gnamemap_path = conf_dir / 'gnamefile.txt'
+            gnamemap_path.touch()
             cmdline += ['-o', f'unamefile={unamemap_path}', '-o', f'gnamefile={gnamemap_path}']
 
     new_env = dict(os.environ)  # copy, don't modify
@@ -156,7 +164,7 @@ def mount_sshfs(  # noqa: too-many-locals
             umount(mount_process, mnt_dir)
 
 
-def create_sshfs_dirs_fixture(name_map: NamemapType) -> Callable:
+def create_sshfs_dirs_fixture(name_map: TestNamemapType) -> Callable:
     @pytest.fixture(
         scope='session',
         params=product_dict_values(
@@ -185,6 +193,7 @@ def create_sshfs_dirs_fixture(name_map: NamemapType) -> Callable:
     return fixture
 
 
-sshfs_dirs = create_sshfs_dirs_fixture(NamemapType.NONE)
-sshfs_dirs_namemap_user = create_sshfs_dirs_fixture(NamemapType.USER)
-sshfs_dirs_namemap_file = create_sshfs_dirs_fixture(NamemapType.FILE)
+sshfs_dirs = create_sshfs_dirs_fixture(TestNamemapType.NONE)
+sshfs_dirs_namemap_user = create_sshfs_dirs_fixture(TestNamemapType.USER)
+sshfs_dirs_namemap_file = create_sshfs_dirs_fixture(TestNamemapType.FILE)
+sshfs_dirs_namemap_file_not_found = create_sshfs_dirs_fixture(TestNamemapType.FILE_EMPTY)

@@ -1034,11 +1034,9 @@ static int buf_get_attrs(struct buffer *buf, struct stat *stbuf, int *flagsp,
             }
         } else if (sshfs.namemap == NAMEMAP_FILE) {
             if (sshfs.uname_to_id)
-                if (translate_name_to_id(remote_uname, &uid, sshfs.uname_to_id) == -1)
-                    return -EPERM;
+                translate_name_to_id(remote_uname, &uid, sshfs.uname_to_id);
             if (sshfs.gname_to_id)
-                if (translate_name_to_id(remote_gname, &gid, sshfs.gname_to_id) == -1)
-                    return -EPERM;
+                translate_name_to_id(remote_gname, &gid, sshfs.gname_to_id);
         }
     }
 

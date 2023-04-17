@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 import errno
 import filecmp
+import grp
 import os
 import pwd
 import shutil
@@ -404,6 +405,22 @@ def test_namemap_file(sshfs_dirs_namemap_file: SshfsDirs) -> None:
     mnt_path = sshfs_dirs_namemap_file.mnt_dir / name
     assert mnt_path.owner() == 'foo_user'
     assert mnt_path.group() == 'bar_group'
+
+
+def test_namemap_file_empty(sshfs_dirs_namemap_file_not_found: SshfsDirs) -> None:
+    if os.getuid() != 0:
+        pytest.skip('Root required')
+
+    name = name_generator()
+    src_path = sshfs_dirs_namemap_file_not_found.src_dir / name
+    src_path.mkdir()
+
+    mnt_path = sshfs_dirs_namemap_file_not_found.mnt_dir / name
+
+    pw_nobody = pwd.getpwnam('nobody')
+    grp_nobody = grp.getgrgid(pw_nobody.pw_gid)
+    assert mnt_path.owner() == pw_nobody.pw_name
+    assert mnt_path.group() == grp_nobody.gr_name
 
 
 def test_chown(sshfs_dirs_namemap_file: SshfsDirs) -> None:
