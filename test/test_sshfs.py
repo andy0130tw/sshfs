@@ -410,24 +410,33 @@ def test_chown(sshfs_dirs_namemap_file: SshfsDirs) -> None:
     if os.getuid() != 0:
         pytest.skip('Root required')
 
-    path = sshfs_dirs_namemap_file.mnt_dir / name_generator()
-    path.mkdir()
-    fstat = path.lstat()
+    name = name_generator()
+    src_path = sshfs_dirs_namemap_file.src_dir / name
+    mnt_path = sshfs_dirs_namemap_file.mnt_dir / name
+
+    mnt_path.mkdir()
+    fstat = mnt_path.lstat()
     gid = fstat.st_gid
 
     pw_new = pwd.getpwnam('foo_user')
 
     uid_new = pw_new.pw_uid
-    os.chown(path, uid_new, -1)
-    fstat = path.lstat()
+    os.chown(mnt_path, uid_new, -1)
+    fstat = mnt_path.lstat()
     assert fstat.st_uid == uid_new
     assert fstat.st_gid == gid
 
     gid_new = pw_new.pw_gid
-    os.chown(path, -1, gid_new)
-    fstat = path.lstat()
+    os.chown(mnt_path, -1, gid_new)
+    fstat = mnt_path.lstat()
     assert fstat.st_uid == uid_new
     assert fstat.st_gid == gid_new
+
+    pw_root = pwd.getpwnam('root')
+
+    fstat = src_path.lstat()
+    assert fstat.st_uid == pw_root.pw_uid
+    assert fstat.st_gid == pw_root.pw_gid
 
 
 if __name__ == '__main__':
