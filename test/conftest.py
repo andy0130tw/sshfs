@@ -41,8 +41,7 @@ def data_file(tmp_path_factory: pytest.TempPathFactory) -> DataFile:
     test_data_file = data_dir / 'data.txt'
     random.seed(12345)
     test_data = ''.join(random.choices(string.ascii_letters + string.digits, k=2048)).encode()
-    with test_data_file.open('wb') as fh:
-        fh.write(test_data)
+    test_data_file.write_bytes(test_data)
     return DataFile(test_data_file, test_data)
 
 
@@ -137,8 +136,7 @@ def mount_sshfs(  # noqa: too-many-locals
             with unamemap_path.open('w') as sr:
                 sr.write('foo_user:root\n')
             gnamemap_path = conf_dir / 'gnamefile.txt'
-            with gnamemap_path.open('w') as sr:
-                sr.write('bar_group:root\n')
+            gnamemap_path.write_text('bar_group:root\n')
             cmdline += ['-o', f'unamefile={unamemap_path}', '-o', f'gnamefile={gnamemap_path}']
         case TestNamemapType.FILE_EMPTY:
             cmdline += ['-o', 'namemap=file']

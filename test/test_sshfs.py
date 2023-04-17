@@ -124,8 +124,7 @@ def test_append(sshfs_dirs: SshfsDirs) -> None:
     with os.fdopen(os.open(path, os.O_WRONLY | os.O_APPEND), 'ab') as fd:
         fd.write(b'bar\n')
 
-    with path.open('rb') as fh_:
-        assert fh_.read() == b'foo\nbar\n'
+    assert path.read_bytes() == b'foo\nbar\n'
 
 
 def test_seek(sshfs_dirs: SshfsDirs) -> None:
@@ -139,8 +138,7 @@ def test_seek(sshfs_dirs: SshfsDirs) -> None:
         fd.seek(4, os.SEEK_SET)
         fd.write(b'com')
 
-    with path.open('rb') as fh_:
-        assert fh_.read() == b'\0foocom\n'
+    assert path.read_bytes() == b'\0foocom\n'
 
 
 def test_truncate_path(sshfs_dirs: SshfsDirs, data_file: DataFile) -> None:
@@ -199,8 +197,7 @@ def test_passthrough(sshfs_dirs: SshfsDirs) -> None:
     mnt_path = sshfs_dirs.src_dir / name
     assert not name_in_dir(name, sshfs_dirs.src_dir)
     assert not name_in_dir(name, sshfs_dirs.mnt_dir)
-    with src_path.open('w', encoding='utf-8') as fh_:
-        fh_.write('Hello, world')
+    src_path.write_text('Hello, world')
     assert name_in_dir(name, sshfs_dirs.src_dir)
     if sshfs_dirs.cache_timeout:
         safe_sleep(sshfs_dirs.cache_timeout + 1)
@@ -351,8 +348,7 @@ def test_symlink(sshfs_dirs: SshfsDirs) -> None:
 def test_unlink(sshfs_dirs: SshfsDirs) -> None:
     name = name_generator()
     path = sshfs_dirs.mnt_dir / name
-    with (sshfs_dirs.src_dir / name).open('wb') as fh_:
-        fh_.write(b'hello')
+    (sshfs_dirs.src_dir / name).write_bytes(b'hello')
     if sshfs_dirs.cache_timeout:
         safe_sleep(sshfs_dirs.cache_timeout + 1)
     assert name_in_dir(name, sshfs_dirs.mnt_dir)
