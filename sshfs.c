@@ -183,6 +183,7 @@
 #define SSH_FXP_REALPATH_STAT_IF            0x00000002
 #define SSH_FXP_REALPATH_STAT_ALWAYS        0x00000003
 
+#define SFTP_EXT_POSIX_RENAME "posix-rename@openssh.com"
 #define SFTP_EXT_STATVFS "statvfs@openssh.com"
 #define SFTP_EXT_FSYNC "fsync@openssh.com"
 
@@ -427,6 +428,7 @@ struct sshfs {
     pthread_cond_t outstanding_cond;
     int password_stdin;
     char *password;
+    int ext_posix_rename;
     int ext_statvfs;
     int ext_fsync;
     struct fuse_operations *op;
@@ -1772,6 +1774,10 @@ static int sftp_init_reply_ok(struct conn *conn, struct buffer *buf,
 
             DEBUG("Extension: %s <%s>\n", ext, extdata);
 
+            if (strcmp(ext, SFTP_EXT_POSIX_RENAME) == 0 &&
+                strcmp(extdata, "1") == 0) {
+                sshfs.ext_posix_rename = 1;
+            }
             if (strcmp(ext, SFTP_EXT_STATVFS) == 0 &&
                 strcmp(extdata, "2") == 0)
                 sshfs.ext_statvfs = 1;
@@ -2670,6 +2676,20 @@ static int sshfs_do_rename(const char *from, const char *to, unsigned int flags)
     return err;
 }
 
+static int sshfs_ext_posix_rename(const char *from, const char *to)
+{
+    int err;
+    struct buffer buf;
+    buf_init(&buf, 0);
+    buf_add_string(&buf, SFTP_EXT_POSIX_RENAME);
+    buf_add_path(&buf, from);
+    buf_add_path(&buf, to);
+    // Commutes with pending write(), so we can use any connection
+    err = sftp_request(get_conn(NULL, NULL), SSH_FXP_EXTENDED, &buf, SSH_FXP_STATUS, NULL);
+    buf_free(&buf);
+    return err;
+}
+
 static int sshfs_rename(const char *from, const char *to, unsigned int flags)
 {
     int err;
@@ -2678,7 +2698,11 @@ static int sshfs_rename(const char *from, const char *to, unsigned int flags)
     if(flags != 0)
         return -EINVAL;
 
-    err = sshfs_do_rename(from, to, flags);
+    if (sshfs.ext_posix_rename)
+        // Default to `posix-rename`, as this allows overwriting files. This is assumed by *GIO*.
+        err = sshfs_ext_posix_rename(from, to);
+    else
+        err = sshfs_do_rename(from, to, flags);
     if (!err && sshfs.max_conns > 1) {
         pthread_mutex_lock(&sshfs.lock);
         ce = g_hash_table_lookup(sshfs.conntab, from);
