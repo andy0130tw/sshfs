@@ -40,5 +40,4 @@ sshfs.1
 /__pypackages__/
 
 # Test directories
-/mnt/
 /scratch/
