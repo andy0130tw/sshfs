@@ -22,6 +22,7 @@ pkgver() {
 prepare() {
   cd "$_pkgname"
   patch --forward --strip=1 --input="${srcdir}/../nanosecond.patch"
+  patch --forward --strip=1 --input="${srcdir}/../rmdir.patch"
 }
 
 build() {
