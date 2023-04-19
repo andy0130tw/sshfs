@@ -262,15 +262,28 @@ def test_readdir(sshfs_dirs: SshfsDirs, data_file: DataFile) -> None:
 
 def test_rmdir(sshfs_dirs: SshfsDirs) -> None:
     dirname = name_generator()
-    path = sshfs_dirs.mnt_dir / dirname
+    filename = name_generator()
     (sshfs_dirs.src_dir / dirname).mkdir()
+    (sshfs_dirs.src_dir / dirname / filename).touch()
+    dir_path = sshfs_dirs.mnt_dir / dirname
+    file_path = dir_path / filename
+
     if sshfs_dirs.cache_timeout:
         safe_sleep(sshfs_dirs.cache_timeout + 1)
+
     assert name_in_dir(dirname, sshfs_dirs.mnt_dir)
-    path.rmdir()
+
     with pytest.raises(OSError) as exc_info:
-        path.lstat()
+        dir_path.rmdir()
+    assert exc_info.value.errno == errno.ENOTEMPTY
+    assert exc_info.value.filename == str(dir_path)
+
+    file_path.unlink()
+    dir_path.rmdir()
+    with pytest.raises(OSError) as exc_info:
+        dir_path.lstat()
     assert exc_info.value.errno == errno.ENOENT
+
     assert not name_in_dir(dirname, sshfs_dirs.mnt_dir)
     assert not name_in_dir(dirname, sshfs_dirs.src_dir)
 
