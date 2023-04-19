@@ -19,12 +19,6 @@ pkgver() {
   git describe --long --abbrev=7 | sed 's/\([^-]*-g\)/r\1/;s/-/./g'
 }
 
-prepare() {
-  cd "$_pkgname"
-  patch --forward --strip=1 --input="${srcdir}/../nanosecond.patch"
-  patch --forward --strip=1 --input="${srcdir}/../rmdir.patch"
-}
-
 build() {
   cd "$_pkgname"
   ./autogen.sh
