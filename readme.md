@@ -2,7 +2,7 @@
 ## About
 This is an updated version of *SSHFS*, that supports the latest version of *SFTP*, v6. For ease of maintenance, only the latest version will be supported.
 
-It supports *Green End SFTP Server*.
+It supports [Green End SFTP Server](https://www.greenend.org.uk/rjk/sftpserver/).
 
 Compared to the *SFTP* spec, it does not support:
 
