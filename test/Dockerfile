@@ -1,5 +1,4 @@
 # syntax = docker/dockerfile:1.2
-
 FROM archlinux
 
 RUN echo 'Server = https://sydney.mirror.pkgbuild.com/$repo/os/$arch' > /etc/pacman.d/mirrorlist
