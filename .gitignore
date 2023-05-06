@@ -36,6 +36,9 @@ sshfs.1
 .deps/
 /build
 
+# PDM
+/.pdm-python
+
 # Python Library
 /__pypackages__/
 
