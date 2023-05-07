@@ -9,6 +9,7 @@ import stat
 import sys
 from pathlib import Path
 from tempfile import NamedTemporaryFile
+from typing import Self
 
 import pytest
 from conftest import DataFile, SshfsDirs
@@ -21,7 +22,7 @@ pytestmark = fuse_test_marker()
 class NameGenerator:
     counter = 0
 
-    def __call__(self) -> str:
+    def __call__(self: Self) -> str:
         self.counter += 1
         return f'testfile_{self.counter}'
 
