@@ -394,6 +394,14 @@ struct sshfs {
 	char *ssh_command;
 	char *sftp_server;
 	struct fuse_args ssh_args;
+	char *workarounds;
+	int rename_workaround;
+	int renamexdev_workaround;
+	int truncate_workaround;
+	int buflimit_workaround;
+	int unrel_append;
+	int fstat_workaround;
+	int createmode_workaround;
 	int transform_symlinks;
 	int follow_symlinks;
 	int no_check_root;
@@ -558,6 +566,7 @@ static struct fuse_opt sshfs_opts[] = {
 	SSHFS_OPT("sftp_server=%s",    sftp_server, 0),
 	SSHFS_OPT("max_read=%u",       max_read, 0),
 	SSHFS_OPT("max_write=%u",      max_write, 0),
+	SSHFS_OPT("workaround=%s",     workarounds, 0),
 	SSHFS_OPT("namemap=user",      namemap, NAMEMAP_USER),
 	SSHFS_OPT("namemap=file",      namemap, NAMEMAP_FILE),
 	SSHFS_OPT("unamefile=%s",      uname_file, 0),
@@ -613,6 +622,26 @@ static struct fuse_opt sshfs_opts[] = {
 	FUSE_OPT_KEY("users", FUSE_OPT_KEY_DISCARD),
 	FUSE_OPT_KEY("_netdev", FUSE_OPT_KEY_DISCARD),
 
+	FUSE_OPT_END
+};
+
+static struct fuse_opt workaround_opts[] = {
+	SSHFS_OPT("none",       rename_workaround, 0),
+	SSHFS_OPT("none",       truncate_workaround, 0),
+	SSHFS_OPT("none",       buflimit_workaround, 0),
+	SSHFS_OPT("none",       fstat_workaround, 0),
+	SSHFS_OPT("rename",     rename_workaround, 1),
+	SSHFS_OPT("norename",   rename_workaround, 0),
+	SSHFS_OPT("renamexdev",   renamexdev_workaround, 1),
+	SSHFS_OPT("norenamexdev", renamexdev_workaround, 0),
+	SSHFS_OPT("truncate",   truncate_workaround, 1),
+	SSHFS_OPT("notruncate", truncate_workaround, 0),
+	SSHFS_OPT("buflimit",   buflimit_workaround, 1),
+	SSHFS_OPT("nobuflimit", buflimit_workaround, 0),
+	SSHFS_OPT("fstat",      fstat_workaround, 1),
+	SSHFS_OPT("nofstat",    fstat_workaround, 0),
+	SSHFS_OPT("createmode",   createmode_workaround, 1),
+	SSHFS_OPT("nocreatemode", createmode_workaround, 0),
 	FUSE_OPT_END
 };
 
@@ -1800,6 +1829,7 @@ static int sftp_init_reply_ok(struct conn *conn, struct buffer *buf,
 			if (strcmp(ext, SFTP_EXT_POSIX_RENAME) == 0 &&
 			    strcmp(extdata, "1") == 0) {
 				sshfs.ext_posix_rename = 1;
+				sshfs.rename_workaround = 0;
 			}
 			if (strcmp(ext, SFTP_EXT_STATVFS) == 0 &&
 			    strcmp(extdata, "2") == 0)
@@ -2073,6 +2103,13 @@ static void *sshfs_init(struct fuse_conn_info *conn,
 	/* Readahead should be done by kernel or sshfs but not both */
 	if (conn->capable & FUSE_CAP_ASYNC_READ)
 		sshfs.sync_read = 1;
+
+	// These workarounds require the "path" argument.
+	cfg->nullpath_ok = !(sshfs.truncate_workaround || sshfs.fstat_workaround);
+
+	// When using multiple connections, release() needs to know the path
+	if (sshfs.max_conns > 1)
+		cfg->nullpath_ok = 0;
 
 	// Lookup of . and .. is supported
 	conn->capable |= FUSE_CAP_EXPORT_SUPPORT;
@@ -2714,6 +2751,14 @@ static int sshfs_ext_posix_rename(const char *from, const char *to)
 	return err;
 }
 
+static void random_string(char *str, int length)
+{
+	int i;
+	for (i = 0; i < length; i++)
+		*str++ = (char)('0' + rand_r(&sshfs.randseed) % 10);
+	*str = '\0';
+}
+
 static int sshfs_rename(const char *from, const char *to, unsigned int flags)
 {
 	int err;
@@ -2727,6 +2772,26 @@ static int sshfs_rename(const char *from, const char *to, unsigned int flags)
 		err = sshfs_ext_posix_rename(from, to);
 	else
 		err = sshfs_do_rename(from, to, flags);
+	if (err == -EPERM && sshfs.rename_workaround) {
+		size_t tolen = strlen(to);
+		if (tolen + RENAME_TEMP_CHARS < PATH_MAX) {
+			int tmperr;
+			char totmp[PATH_MAX];
+			strcpy(totmp, to);
+			random_string(totmp + tolen, RENAME_TEMP_CHARS);
+			tmperr = sshfs_do_rename(to, totmp, flags);
+			if (!tmperr) {
+				err = sshfs_do_rename(from, to, flags);
+				if (!err)
+					err = sshfs_unlink(totmp);
+				else
+					sshfs_do_rename(totmp, to, flags);
+			}
+		}
+	}
+	if (err == -EPERM && sshfs.renamexdev_workaround)
+		err = -EXDEV;
+
 	if (!err && sshfs.max_conns > 1) {
 		pthread_mutex_lock(&sshfs.lock);
 		ce = g_hash_table_lookup(sshfs.conntab, from);
@@ -2873,6 +2938,9 @@ out:
 	buf_free(&buf);
 	return err;
 }
+
+static int sshfs_truncate_workaround(const char *path, off_t size,
+                                     struct fuse_file_info *fi);
 
 static void sshfs_inc_modifver(void)
 {
@@ -3584,6 +3652,9 @@ static int sshfs_statfs(const char *path, struct statvfs *buf)
 static int sshfs_create(const char *path, mode_t mode,
                         struct fuse_file_info *fi)
 {
+	if (sshfs.createmode_workaround)
+		mode = 0;
+
 	return sshfs_open_common(path, mode, fi);
 }
 
@@ -3601,6 +3672,8 @@ static int sshfs_truncate(const char *path, off_t size,
 	}
 
 	sshfs_inc_modifver();
+	if (sshfs.truncate_workaround)
+		return sshfs_truncate_workaround(path, size, fi);
 
 	buf_init(&buf, 0);
 
@@ -3632,7 +3705,7 @@ static int sshfs_getattr(const char *path, struct stat *stbuf,
 	struct buffer outbuf;
 	struct sshfs_file *sf = NULL;
 
-	if (fi != NULL) {
+	if (fi != NULL && !sshfs.fstat_workaround) {
 		sf = get_sshfs_file(fi);
 		if (!sshfs_file_is_conn(sf))
 			return -EIO;
@@ -3661,6 +3734,125 @@ static int sshfs_getattr(const char *path, struct stat *stbuf,
 	}
 	buf_free(&buf);
 	return err;
+}
+
+static int sshfs_truncate_zero(const char *path)
+{
+	int err;
+	struct fuse_file_info fi;
+
+	fi.flags = O_WRONLY | O_TRUNC;
+	err = sshfs_open(path, &fi);
+	if (!err)
+		sshfs_release(path, &fi);
+
+	return err;
+}
+
+static size_t calc_buf_size(off_t size, off_t offset)
+{
+	return offset + sshfs.max_read < size ? sshfs.max_read : size - offset;
+}
+
+static int sshfs_truncate_shrink(const char *path, off_t size)
+{
+	int res;
+	char *data;
+	off_t offset;
+	struct fuse_file_info fi;
+
+	data = calloc(size, 1);
+	if (!data)
+		return -ENOMEM;
+
+	fi.flags = O_RDONLY;
+	res = sshfs_open(path, &fi);
+	if (res)
+		goto out;
+
+	for (offset = 0; offset < size; offset += res) {
+		size_t bufsize = calc_buf_size(size, offset);
+		res = sshfs_read(path, data + offset, bufsize, offset, &fi);
+		if (res <= 0)
+			break;
+	}
+	sshfs_release(path, &fi);
+	if (res < 0)
+		goto out;
+
+	fi.flags = O_WRONLY | O_TRUNC;
+	res = sshfs_open(path, &fi);
+	if (res)
+		goto out;
+
+	for (offset = 0; offset < size; offset += res) {
+		size_t bufsize = calc_buf_size(size, offset);
+		res = sshfs_write(path, data + offset, bufsize, offset, &fi);
+		if (res < 0)
+			break;
+	}
+	if (res >= 0)
+		res = sshfs_flush(path, &fi);
+	sshfs_release(path, &fi);
+
+out:
+	free(data);
+	return res;
+}
+
+static int sshfs_truncate_extend(const char *path, off_t size,
+                                 struct fuse_file_info *fi)
+{
+	int res;
+	char c = 0;
+	struct fuse_file_info tmpfi;
+	struct fuse_file_info *openfi = fi;
+	if (!fi) {
+		openfi = &tmpfi;
+		openfi->flags = O_WRONLY;
+		res = sshfs_open(path, openfi);
+		if (res)
+			return res;
+	}
+	res = sshfs_write(path, &c, 1, size - 1, openfi);
+	if (res == 1)
+		res = sshfs_flush(path, openfi);
+	if (!fi)
+		sshfs_release(path, openfi);
+
+	return res;
+}
+
+/*
+ * Work around broken sftp servers which don't handle
+ * SSH_FILEXFER_ATTR_SIZE in SETSTAT request.
+ *
+ * If new size is zero, just open the file with O_TRUNC.
+ *
+ * If new size is smaller than current size, then copy file locally,
+ * then open/trunc and send it back.
+ *
+ * If new size is greater than current size, then write a zero byte to
+ * the new end of the file.
+ */
+static int sshfs_truncate_workaround(const char *path, off_t size,
+                                     struct fuse_file_info *fi)
+{
+	if (size == 0)
+		return sshfs_truncate_zero(path);
+	else {
+		struct stat stbuf;
+		int err;
+		err = sshfs_getattr(path, &stbuf, fi);
+		if (err)
+			return err;
+		if (stbuf.st_size == size)
+			return 0;
+		else if (stbuf.st_size > size)
+			return sshfs_truncate_shrink(path, size);
+		else
+			return sshfs_truncate_extend(path, size, fi);
+	}
 }
 
 static int processing_init(void)
@@ -3751,6 +3943,14 @@ static void usage(const char *progname)
 "                           sets the interval for forced cleaning of the\n"
 "                           cache if full (default: 5)\n"
 "    -o direct_io           enable direct i/o\n"
+"    -o workaround=LIST     colon separated list of workarounds\n"
+"             none             no workarounds enabled\n"
+"             [no]rename       fix renaming to existing file (default: off)\n"
+"             [no]renamexdev   fix moving across filesystems (default: off)\n"
+"             [no]truncate     fix truncate for old servers (default: off)\n"
+"             [no]buflimit     fix buffer fillup bug in server (default: off)\n"
+"             [no]fstat        always use stat() instead of fstat() (default: off)\n"
+"             [no]createmode   always pass mode 0 to create (default: off)\n"
 "    -o namemap=TYPE        user/group name mapping (default: " NAMEMAP_DEFAULT ")\n"
 "             user             only translate UID/GID of connecting user\n"
 "             file             translate UIDs/GIDs contained in unamefile/gnamefile\n"
@@ -3889,6 +4089,33 @@ static int sshfs_opt_proc(void *data, const char *arg, int key,
 		fprintf(stderr, "internal error\n");
 		abort();
 	}
+}
+
+static int workaround_opt_proc(void *data, const char *arg, int key,
+			       struct fuse_args *outargs)
+{
+	(void) data; (void) key; (void) outargs;
+	fprintf(stderr, "unknown workaround: '%s'\n", arg);
+	return -1;
+}
+static int parse_workarounds(void)
+{
+	int res;
+	/* Need separate variables because literals are const
+	   char */
+	char argv0[] = "";
+	char argv1[] = "-o";
+	char *argv[] = { argv0, argv1, sshfs.workarounds, NULL };
+	struct fuse_args args = FUSE_ARGS_INIT(3, argv);
+	char *s = sshfs.workarounds;
+	if (!s)
+		return 0;
+	while ((s = strchr(s, ':')))
+		*s = ',';
+	res = fuse_opt_parse(&args, &sshfs, workaround_opts,
+			     workaround_opt_proc);
+	fuse_opt_free_args(&args);
+	return res;
 }
 
 static int read_password(void)
@@ -4257,6 +4484,15 @@ int main(int argc, char *argv[])
 	/* SFTP spec says all servers should allow at least 32k I/O */
 	sshfs.max_read = 32768;
 	sshfs.max_write = 32768;
+#ifdef __APPLE__
+	sshfs.rename_workaround = 1;
+#else
+	sshfs.rename_workaround = 0;
+#endif
+	sshfs.renamexdev_workaround = 0;
+	sshfs.truncate_workaround = 0;
+	sshfs.buflimit_workaround = 0;
+	sshfs.createmode_workaround = 0;
 	sshfs.ssh_ver = 2;
 	sshfs.max_conns = 1;
 	sshfs.ptyfd = -1;
@@ -4284,7 +4520,8 @@ int main(int argc, char *argv[])
 	ssh_add_arg("-a");
 	ssh_add_arg("-oClearAllForwardings=yes");
 
-	if (fuse_opt_parse(&args, &sshfs, sshfs_opts, sshfs_opt_proc) == -1)
+	if (fuse_opt_parse(&args, &sshfs, sshfs_opts, sshfs_opt_proc) == -1 ||
+	    parse_workarounds() == -1)
 		exit(1);
 
 	if (sshfs.show_version) {
@@ -4358,9 +4595,20 @@ int main(int argc, char *argv[])
 	if (sshfs.debug)
 		sshfs.foreground = 1;
 
-	sshfs.max_outstanding_len = ~0;
+	if (sshfs.buflimit_workaround)
+		/* Work around buggy sftp-server in OpenSSH.  Without this on
+		   a slow server a 10Mbyte buffer would fill up and the server
+		   would abort */
+		sshfs.max_outstanding_len = 8388608;
+	else
+		sshfs.max_outstanding_len = ~0;
 
 	if (sshfs.max_conns > 1) {
+		if (sshfs.buflimit_workaround) {
+			fprintf(stderr, "buflimit workaround is not supported with parallel connections\n");
+			exit(1);
+		}
+
 		if (sshfs.password_stdin) {
 			fprintf(stderr, "password_stdin option cannot be specified with parallel connections\n");
 			exit(1);
