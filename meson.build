@@ -33,7 +33,7 @@ cfg.set_quoted('PACKAGE_VERSION', meson.project_version())
 
 include_dirs = [ include_directories('.') ]
 sshfs_sources = ['sshfs.c', 'cache.c']
-cfg.set_quoted('NAMEMAP_DEFAULT', 'user')
+cfg.set_quoted('IDMAP_DEFAULT', 'user')
 if target_machine.system() == 'darwin'
   sshfs_sources += [ 'compat/fuse_opt.c', 'compat/darwin_compat.c' ]
   include_dirs += [ include_directories('compat') ]
